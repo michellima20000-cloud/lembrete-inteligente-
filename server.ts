@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, Type } from '@google/genai';
 
 dotenv.config();
 
@@ -12,17 +11,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '25mb' }));
-
-// Initialize GoogleGenAI server-side with telemetry header
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
+app.use(express.json({ limit: '10mb' }));
 
 export interface Lembrete {
   id: string;
@@ -45,7 +34,7 @@ export interface UserProfile {
   criado_em: string;
 }
 
-// Production Multi-User Data Store strictly keyed by authenticated user ID (Firebase UID)
+// Multi-User Data Store strictly keyed by authenticated user ID (Firebase UID)
 const userLembretes = new Map<string, Lembrete[]>();
 const userProfiles = new Map<string, UserProfile>();
 
@@ -132,19 +121,10 @@ app.post('/api/reminders', (req: Request, res: Response) => {
   list.push(newReminder);
   userLembretes.set(user_id, list);
 
-  // Expected standard response format
   res.json({
     status: 'sucesso',
     user_id: user_id,
-    lembrete: {
-      id: newReminder.id,
-      titulo: newReminder.titulo,
-      data_hora_execucao: newReminder.data_hora_execucao,
-      status_tarefa: newReminder.status_tarefa,
-      antecedencia_minutos: newReminder.antecedencia_minutos,
-      categoria: newReminder.categoria,
-      urgencia: newReminder.urgencia,
-    },
+    lembrete: newReminder,
     mensagem_sistema: 'Lembrete agendado com sucesso e isolado para o perfil do usuário.',
   });
 });
@@ -224,114 +204,179 @@ app.delete('/api/reminders/:id', (req: Request, res: Response) => {
   });
 });
 
-// Fallback NLP parser for high-demand spikes or transient 503 errors
-function fallbackParseNLP(params: {
+// 100% Local & Deterministic Natural Language Regex Parser (Zero external APIs)
+function parseReminderCommandLocal(params: {
   texto: string;
   referenceTime: string;
   user_id: string;
   antecedencia_padrao?: number;
 }) {
-  const text = params.texto.toLowerCase();
+  const rawText = params.texto.trim();
+  const text = rawText.toLowerCase();
   const ref = new Date(params.referenceTime);
   let target = new Date(ref.getTime());
 
-  // Check antecedência
+  // 1. Antecedência
   let antecedencia = params.antecedencia_padrao || 0;
   const antMatch =
-    text.match(/(?:com|avise|avisar)?\s*(\d+)\s*(?:minutos?|min)\s*de\s*anteced[êe]ncia/i) ||
-    text.match(/(\d+)\s*(?:minutos?|min)\s*antes/i);
+    text.match(/(?:com|avise|avisar)?\s*(\d+)\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)/i);
   if (antMatch) {
     antecedencia = parseInt(antMatch[1], 10);
   }
 
-  // Check relative minutes: "daqui a X minutos" / "em X minutos"
-  const minMatch = text.match(/daqui\s*a\s*(\d+)\s*minutos?/i) || text.match(/em\s*(\d+)\s*minutos?/i);
-  // Check relative hours: "daqui a X horas" / "em X horas"
-  const hourMatch = text.match(/daqui\s*a\s*(\d+)\s*horas?/i) || text.match(/em\s*(\d+)\s*horas?/i);
+  // 2. Relative delays: "em X minutos", "daqui a X minutos", "meia hora"
+  const minMatch = text.match(/(?:daqui\s*a|em)\s*(\d+)\s*(?:minutos?|min)\b/i);
+  const hourMatch = text.match(/(?:daqui\s*a|em)\s*(\d+)\s*(?:horas?|h)\b/i);
+  const halfHourMatch = text.match(/(?:daqui\s*a|em)\s*meia\s*hora\b/i);
 
   if (minMatch) {
     target = new Date(target.getTime() + parseInt(minMatch[1], 10) * 60000);
+  } else if (halfHourMatch) {
+    target = new Date(target.getTime() + 30 * 60000);
   } else if (hourMatch) {
     target = new Date(target.getTime() + parseInt(hourMatch[1], 10) * 3600000);
   } else {
-    // Check day target: "amanhã" or "hoje"
-    if (text.includes('amanhã') || text.includes('amanha')) {
+    // 3. Day of execution
+    const isTomorrow = text.includes('amanhã') || text.includes('amanha');
+    const isAfterTomorrow = text.includes('depois de amanhã') || text.includes('depois de amanha');
+
+    if (isAfterTomorrow) {
+      target.setDate(target.getDate() + 2);
+    } else if (isTomorrow) {
       target.setDate(target.getDate() + 1);
+    } else {
+      // Check weekday names (segunda, terça, quarta, quinta, sexta, sábado, domingo)
+      const weekDays: Record<string, number> = {
+        domingo: 0,
+        segunda: 1,
+        'segunda-feira': 1,
+        terça: 2,
+        terca: 2,
+        'terça-feira': 2,
+        'terca-feira': 2,
+        quarta: 3,
+        'quarta-feira': 3,
+        quinta: 4,
+        'quinta-feira': 4,
+        sexta: 5,
+        'sexta-feira': 5,
+        sábado: 6,
+        sabado: 6,
+      };
+
+      for (const [dayName, dayIndex] of Object.entries(weekDays)) {
+        const regex = new RegExp(`\\b(?:na\\s+|no\\s+|próxim[ao]\\s+)?${dayName}\\b`, 'i');
+        if (regex.test(text)) {
+          const currentDay = ref.getDay();
+          let daysDiff = dayIndex - currentDay;
+          if (daysDiff <= 0) daysDiff += 7;
+          target.setDate(target.getDate() + daysDiff);
+          break;
+        }
+      }
     }
 
-    // Check specific time: "às 12h", "às 12:30", "12h30", "às 19h"
+    // 4. Specific Time (e.g., "às 14h", "às 14:30", "14h30", "19:00", "às 9 e meia")
     const timeMatch =
-      text.match(/(?:às|as|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?/i) ||
-      text.match(/(\d{1,2})\s*horas?/i);
-    if (timeMatch) {
+      text.match(/(?:às|as|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?\b/i) ||
+      text.match(/(\d{1,2})\s*horas?\b/i);
+    const halfPastMatch = text.match(/(?:às|as)\s*(\d{1,2})\s*e\s*meia\b/i);
+
+    if (halfPastMatch) {
+      const h = parseInt(halfPastMatch[1], 10);
+      target.setHours(h, 30, 0, 0);
+    } else if (timeMatch) {
       const hours = parseInt(timeMatch[1], 10);
       const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
       target.setHours(hours, minutes, 0, 0);
 
-      // If scheduled for "today" but hour has already passed, schedule for tomorrow
-      if (!text.includes('amanhã') && target.getTime() <= ref.getTime()) {
+      // If scheduled for today without explicit "amanhã" and time has already passed, schedule for tomorrow
+      if (!isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
         target.setDate(target.getDate() + 1);
       }
     } else {
-      // Default time if not specified
-      if (text.includes('amanhã')) {
+      // Default time periods if no explicit hour given
+      if (text.includes('de manhã') || text.includes('pela manhã') || text.includes('manha')) {
+        target.setHours(9, 0, 0, 0);
+      } else if (text.includes('à tarde') || text.includes('a tarde') || text.includes('pela tarde')) {
+        target.setHours(14, 0, 0, 0);
+      } else if (text.includes('à noite') || text.includes('a noite') || text.includes('pela noite')) {
+        target.setHours(20, 0, 0, 0);
+      } else if (isTomorrow || isAfterTomorrow) {
         target.setHours(9, 0, 0, 0);
       } else {
-        target = new Date(target.getTime() + 60 * 60000); // 1 hour from now
+        // Default to 1 hour from current time
+        target = new Date(target.getTime() + 60 * 60000);
       }
     }
   }
 
-  // Extract clean task description
-  let cleanedTitle = params.texto
-    .replace(/^me lembre\s*(?:de)?/i, '')
-    .replace(/^lembrar\s*(?:de)?/i, '')
-    .replace(/^agendar\s*(?:de)?/i, '')
-    .replace(/amanhã\s*(?:às|as)?\s*\d{1,2}(?:h|:\d{2})?/gi, '')
-    .replace(/hoje\s*(?:às|as)?\s*\d{1,2}(?:h|:\d{2})?/gi, '')
-    .replace(/daqui\s*a\s*\d+\s*(?:minutos?|horas?)/gi, '')
-    .replace(/em\s*\d+\s*(?:minutos?|horas?)/gi, '')
-    .replace(/(?:com\s*)?\d+\s*minutos?\s*(?:de\s*antecedência|antes)/gi, '')
+  // 5. Clean task title by removing command triggers and temporal words
+  let cleanedTitle = rawText
+    .replace(/^(?:por favor\s*,?\s*)?(?:me\s+)?lembre\s*(?:de\s+|para\s+)?/i, '')
+    .replace(/^lembrar\s*(?:de\s+|para\s+)?/i, '')
+    .replace(/^agendar\s*(?:uma\s+tarefa\s+de\s+|um\s+lembrete\s+de\s+|de\s+|para\s+)?/i, '')
+    .replace(/^avise(?:-me)?\s*(?:de\s+|para\s+)?/i, '')
+    .replace(/^n[ãa]o\s+esquecer\s*(?:de\s+|para\s+)?/i, '')
+    .replace(/^criar\s+(?:um\s+)?lembrete\s*(?:de\s+|para\s+)?/i, '');
+
+  cleanedTitle = cleanedTitle
+    .replace(/(?:^|\s)(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:às|as|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)\d{1,2}\s*horas?(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:às|as)\s*\d{1,2}\s*e\s*meia(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:daqui\s*a|em)\s*meia\s*hora(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:de\s+manh[ãa]|pela\s+manh[ãa]|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=\s|$)/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Strip leading prepositions
-  cleanedTitle = cleanedTitle.replace(/^(?:de\s+|para\s+|que\s+)/i, '').trim();
+  // Strip leading prepositions left behind
+  cleanedTitle = cleanedTitle.replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+)/i, '').trim();
   if (!cleanedTitle) {
-    cleanedTitle = params.texto;
+    cleanedTitle = rawText;
   }
   cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
 
-  // Categorize
+  // 6. Category classification by keyword matching
   let categoria = 'Geral';
   const lTitle = cleanedTitle.toLowerCase();
-  if (
-    lTitle.includes('cadastro') ||
-    lTitle.includes('reunião') ||
-    lTitle.includes('proposta') ||
-    lTitle.includes('cliente') ||
-    lTitle.includes('email') ||
-    lTitle.includes('projeto') ||
-    lTitle.includes('trabalho')
-  ) {
+
+  const trabalhoWords = ['reunião', 'reuniao', 'cliente', 'projeto', 'relatório', 'relatorio', 'proposta', 'chefe', 'apresentação', 'apresentacao', 'email', 'entrega', 'sprint', 'call', 'alinhar', 'contrato', 'empresa', 'vaga', 'entrevista', 'cadastro', 'ticket', 'trabalho'];
+  const saudeWords = ['remédio', 'remedio', 'medicamento', 'água', 'agua', 'médico', 'medico', 'consulta', 'dentista', 'academia', 'treino', 'pilates', 'exame', 'vacina', 'caminhar', 'psicólogo', 'psicologo', 'terapia', 'alongar', 'dormir', 'hospital', 'saúde', 'saude'];
+  const financasWords = ['pagar', 'pagamento', 'boleto', 'conta', 'fatura', 'banco', 'pix', 'transferência', 'transferencia', 'imposto', 'aluguel', 'luz', 'cartão', 'cartao', 'dinheiro', 'salário', 'salario', 'comprar'];
+  const estudosWords = ['estudar', 'estudo', 'prova', 'aula', 'lição', 'licao', 'curso', 'faculdade', 'tese', 'dever', 'ler', 'livro', 'simulado', 'resumo', 'enem', 'escola'];
+
+  if (trabalhoWords.some((w) => lTitle.includes(w))) {
     categoria = 'Trabalho';
-  } else if (
-    lTitle.includes('água') ||
-    lTitle.includes('remedio') ||
-    lTitle.includes('médico') ||
-    lTitle.includes('saúde') ||
-    lTitle.includes('alongar') ||
-    lTitle.includes('exercício')
-  ) {
+  } else if (saudeWords.some((w) => lTitle.includes(w))) {
     categoria = 'Saúde';
-  } else if (
-    lTitle.includes('pagar') ||
-    lTitle.includes('conta') ||
-    lTitle.includes('fatura') ||
-    lTitle.includes('banco') ||
-    lTitle.includes('dinheiro')
-  ) {
+  } else if (financasWords.some((w) => lTitle.includes(w))) {
     categoria = 'Finanças';
+  } else if (estudosWords.some((w) => lTitle.includes(w))) {
+    categoria = 'Estudos';
+  }
+
+  // 7. Urgency detection
+  let urgencia: 'baixa' | 'media' | 'alta' = 'media';
+  if (
+    lTitle.includes('urgente') ||
+    lTitle.includes('emergência') ||
+    lTitle.includes('emergencia') ||
+    lTitle.includes('prioridade') ||
+    lTitle.includes('imediato') ||
+    lTitle.includes('crítico') ||
+    lTitle.includes('critico')
+  ) {
+    urgencia = 'alta';
+  } else if (
+    lTitle.includes('quando der') ||
+    lTitle.includes('sem pressa') ||
+    lTitle.includes('tranquilo') ||
+    lTitle.includes('baixa prioridade')
+  ) {
+    urgencia = 'baixa';
   }
 
   // Format to standard ISO AAAA-MM-DDTHH:MM:SS
@@ -349,23 +394,15 @@ function fallbackParseNLP(params: {
       status_tarefa: 'pendente' as const,
       antecedencia_minutos: antecedencia,
       categoria,
-      urgencia: (lTitle.includes('urgente') || lTitle.includes('imediato')) ? 'alta' : 'media',
+      urgencia,
     },
-    mensagem_sistema: 'Lembrete agendado com sucesso e isolado para o perfil do usuário.',
+    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado com sucesso e isolado no perfil.`,
   };
 }
 
-// API: AI Brain Natural Language Processor (Audio / Text)
-app.post('/api/lembrete/parse', async (req: Request, res: Response) => {
-  const {
-    user_id,
-    texto,
-    audioBase64,
-    audioMimeType,
-    currentLocalTime,
-    fusoHorario,
-    antecedencia_padrao,
-  } = req.body;
+// API: 100% Local Natural Language Reminder Parser (Zero AI / Zero External API cost)
+app.post('/api/lembrete/parse', (req: Request, res: Response) => {
+  const { user_id, texto, currentLocalTime, antecedencia_padrao } = req.body;
 
   if (!user_id) {
     return res.status(400).json({
@@ -374,125 +411,22 @@ app.post('/api/lembrete/parse', async (req: Request, res: Response) => {
     });
   }
 
+  if (!texto || !texto.trim()) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'Nenhum texto fornecido para processamento do lembrete.',
+    });
+  }
+
   const referenceTime = currentLocalTime || new Date().toISOString();
 
-  // Try calling Gemini with retry
-  let parsedData: any = null;
-  let attempts = 0;
-  const maxAttempts = 2;
-
-  while (attempts < maxAttempts && !parsedData) {
-    attempts++;
-    try {
-      const parts: any[] = [];
-      if (audioBase64) {
-        parts.push({
-          inlineData: {
-            mimeType: audioMimeType || 'audio/webm',
-            data: audioBase64,
-          },
-        });
-        parts.push({
-          text: `Ouça o áudio do comando do usuário e extraia a tarefa e o agendamento temporal. Texto complementar: "${texto || ''}".`,
-        });
-      } else {
-        if (!texto || !texto.trim()) {
-          return res.status(400).json({
-            status: 'erro',
-            mensagem: 'Nenhum texto ou áudio fornecido para processamento.',
-          });
-        }
-        parts.push({
-          text: `Comando do usuário: "${texto.trim()}"`,
-        });
-      }
-
-      const systemPrompt = `
-Você é o cérebro de inteligência artificial de alta precisão do aplicativo PWA "Lembrete Inteligente" voltado para smartphones.
-Sua missão é extrair rigorosamente os parâmetros de lembretes a partir de comandos em linguagem natural (digitados ou falados pelo usuário em português).
-
-DIRETRIZES FUNDAMENTAIS:
-1. O usuário é identificado unicamente por user_id = "${user_id}".
-2. Horário e data local de referência no smartphone do usuário: "${referenceTime}". Fuso horário: "${fusoHorario || 'local'}".
-3. Analise expressões temporais relativas como:
-   - "daqui a 10 minutos", "em meia hora", "daqui a 2 horas" -> calcule a partir do horário de referência exato.
-   - "amanhã às 12h", "amanhã de manhã (09:00)", "hoje às 18:30" -> calcule a data exata AAAA-MM-DD e horário HH:MM:SS.
-   - "na próxima quarta-feira às 15h" -> calcule a data do próximo dia da semana correspondente.
-   - Se o usuário não disser o horário exato (ex: "me lembre amanhã de pagar a conta"), defina amanhã às 09:00:00.
-   - Se o horário mencionado hoje já tiver passado em relação ao horário de referência, agende para o próximo dia no mesmo horário.
-4. "data_hora_execucao": deve estar ESTRITAMENTE no formato "AAAA-MM-DDTHH:MM:SS" (sem letras 'Z' ao final, formato local).
-5. "antecedencia_minutos": Se o usuário solicitar ("me avise 10 minutos antes", "com 15 min de antecedência"), extraia o valor (5, 10, 15, ou 30). Se não mencionar, use ${antecedencia_padrao || 0}.
-6. "categoria": classifique automaticamente em uma destas: "Trabalho", "Saúde", "Finanças", "Pessoal", "Estudos", "Outro".
-7. "urgencia": "alta", "media" ou "baixa".
-8. "mensagem_sistema": uma confirmação clara, acolhedora e objetiva em português brasileiro (ex: "Lembrete agendado para amanhã às 12:00 e isolado para o perfil do usuário.").
-
-Você DEVE responder com JSON válido obedecendo fielmente ao schema.
-`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: { parts },
-        config: {
-          systemInstruction: systemPrompt,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              status: { type: Type.STRING },
-              user_id: { type: Type.STRING },
-              lembrete: {
-                type: Type.OBJECT,
-                properties: {
-                  titulo: { type: Type.STRING },
-                  data_hora_execucao: { type: Type.STRING },
-                  status_tarefa: { type: Type.STRING },
-                  antecedencia_minutos: { type: Type.INTEGER },
-                  categoria: { type: Type.STRING },
-                  urgencia: { type: Type.STRING },
-                },
-                required: ['titulo', 'data_hora_execucao', 'status_tarefa'],
-              },
-              mensagem_sistema: { type: Type.STRING },
-            },
-            required: ['status', 'user_id', 'lembrete', 'mensagem_sistema'],
-          },
-        },
-      });
-
-      const rawText = response.text || '{}';
-      parsedData = JSON.parse(rawText);
-    } catch (err: any) {
-      console.warn(`Tentativa ${attempts} com Gemini falhou:`, err?.message || err);
-      if (attempts < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 600));
-      }
-    }
-  }
-
-  // If Gemini was unavailable (e.g. 503 high demand spike), use our high-fidelity fallback NLP parser
-  if (!parsedData && texto && texto.trim()) {
-    console.log('Utilizando motor inteligente de fallback para parsing de linguagem natural');
-    parsedData = fallbackParseNLP({
-      texto: texto.trim(),
-      referenceTime,
-      user_id,
-      antecedencia_padrao,
-    });
-  }
-
-  if (!parsedData) {
-    return res.status(500).json({
-      status: 'erro',
-      mensagem: 'Não foi possível processar a entrada de áudio ou texto. Tente novamente.',
-    });
-  }
-
-  // Force strict user_id boundary matching
-  parsedData.user_id = user_id;
-  parsedData.status = 'sucesso';
-  if (!parsedData.lembrete.status_tarefa) {
-    parsedData.lembrete.status_tarefa = 'pendente';
-  }
+  // Process text deterministically and locally via Regex parser
+  const parsedData = parseReminderCommandLocal({
+    texto: texto.trim(),
+    referenceTime,
+    user_id,
+    antecedencia_padrao,
+  });
 
   // Automatically persist to the user's isolated list
   const newReminder: Lembrete = {
@@ -502,8 +436,8 @@ Você DEVE responder com JSON válido obedecendo fielmente ao schema.
     data_hora_execucao: parsedData.lembrete.data_hora_execucao,
     antecedencia_minutos: Number(parsedData.lembrete.antecedencia_minutos) || 0,
     status_tarefa: 'pendente',
-    categoria: parsedData.lembrete.categoria || 'Geral',
-    urgencia: (parsedData.lembrete.urgencia as any) || 'media',
+    categoria: parsedData.lembrete.categoria,
+    urgencia: parsedData.lembrete.urgencia,
     criado_em: new Date().toISOString(),
     adiado_vezes: 0,
   };
@@ -512,9 +446,14 @@ Você DEVE responder com JSON válido obedecendo fielmente ao schema.
   userItems.push(newReminder);
   userLembretes.set(user_id, userItems);
 
-  parsedData.lembrete.id = newReminder.id;
-
-  return res.json(parsedData);
+  return res.json({
+    status: 'sucesso',
+    user_id,
+    lembrete: {
+      ...newReminder,
+    },
+    mensagem_sistema: parsedData.mensagem_sistema,
+  });
 });
 
 // Setup Vite middlewares in development or static serve in production
@@ -522,7 +461,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);

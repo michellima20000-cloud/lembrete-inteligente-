@@ -18,7 +18,7 @@ function MainApp() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
         <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-2xl shadow-lg shadow-indigo-600/30 animate-pulse">
-          🧠
+          ⏰
         </div>
         <p className="mt-4 text-xs font-semibold text-slate-400">
           Iniciando Lembrete Inteligente...

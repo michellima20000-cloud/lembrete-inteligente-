@@ -3,16 +3,13 @@ import {
   Mic,
   MicOff,
   Send,
-  Sparkles,
+  CalendarCheck,
   Clock,
-  Calendar,
   AlertCircle,
   CheckCircle2,
   Sliders,
-  Volume2,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
-import { useUser } from '../context/UserContext';
 
 interface VoiceAndTextInputProps {
   onOpenManualModal: () => void;
@@ -20,7 +17,6 @@ interface VoiceAndTextInputProps {
 
 export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManualModal }) => {
   const { processAiCommand, isProcessingAi } = useReminders();
-  const { currentUser } = useUser();
 
   const [inputText, setInputText] = useState('');
   const [selectedAntecedencia, setSelectedAntecedencia] = useState<number>(0);
@@ -30,8 +26,6 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'sucesso' | 'erro'; text: string } | null>(null);
 
   const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<any>(null);
 
   // Quick suggestions prompt chips
@@ -42,11 +36,12 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     'Pagar fatura do cartão hoje às 19:30',
   ];
 
-  // Initialize Web Speech Recognition if available
+  // Initialize native Browser Web Speech Recognition (Free, local, zero API keys)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
@@ -55,15 +50,21 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
         recognition.onresult = (event: any) => {
           let current = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
+          for (let i = 0; i < event.results.length; i++) {
             current += event.results[i][0].transcript;
           }
-          setSpeechTranscript(current);
-          setInputText((prev) => (prev ? prev + ' ' + current : current));
+          const cleanTranscript = current.trim();
+          setSpeechTranscript(cleanTranscript);
+          setInputText(cleanTranscript);
         };
 
         recognition.onerror = (event: any) => {
-          console.warn('Speech recognition error:', event.error);
+          console.warn('Erro no reconhecimento de voz nativo:', event.error);
+          setIsRecording(false);
+        };
+
+        recognition.onend = () => {
+          setIsRecording(false);
         };
 
         recognitionRef.current = recognition;
@@ -86,111 +87,68 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     };
   }, [isRecording]);
 
-  const startVoiceCapture = async () => {
+  const startVoiceCapture = () => {
     setFeedbackMessage(null);
     setSpeechTranscript('');
-    audioChunksRef.current = [];
 
-    // Try starting audio media recorder
+    if (!recognitionRef.current) {
+      // If browser doesn't support Web Speech API natively
+      setFeedbackMessage({
+        type: 'erro',
+        text: 'Seu navegador não suporta a Web Speech API. Digite o lembrete no campo de texto.',
+      });
+      return;
+    }
+
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
-          }
-        };
-
-        mediaRecorderRef.current = mediaRecorder;
-        mediaRecorder.start(250);
-      }
-    } catch (err) {
-      console.warn('Microphone stream error, fallback to speech recognition only:', err);
+      recognitionRef.current.start();
+      setIsRecording(true);
+    } catch (e) {
+      console.warn('Erro ao iniciar reconhecimento:', e);
+      setIsRecording(false);
     }
-
-    // Also start speech recognition if available
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (e) {
-        console.warn('Recognition start error:', e);
-      }
-    }
-
-    setIsRecording(true);
   };
 
-  const stopVoiceCapture = async () => {
+  const stopVoiceCapture = () => {
     setIsRecording(false);
-
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch (e) {
-        console.warn('Recognition stop error:', e);
+        console.warn('Erro ao parar reconhecimento:', e);
       }
-    }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
-
-      // If we got audio chunks, process audio through Gemini
-      setTimeout(async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 1000 && !inputText.trim()) {
-          // Convert to base64 and process
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = async () => {
-            const base64Data = (reader.result as string).split(',')[1];
-            await handleSubmitWithData({
-              audioBase64: base64Data,
-              audioMimeType: 'audio/webm',
-            });
-          };
-          return;
-        }
-
-        // If we captured speech text into inputText, submit directly
-        if (inputText.trim()) {
-          await handleSubmit();
-        }
-      }, 500);
-    } else if (inputText.trim()) {
-      await handleSubmit();
-    }
-  };
-
-  const handleSubmitWithData = async (extraParams: { audioBase64?: string; audioMimeType?: string } = {}) => {
-    try {
-      const result = await processAiCommand({
-        texto: inputText.trim() || undefined,
-        audioBase64: extraParams.audioBase64,
-        audioMimeType: extraParams.audioMimeType,
-        antecedenciaPadrao: selectedAntecedencia,
-      });
-
-      setInputText('');
-      setFeedbackMessage({
-        type: 'sucesso',
-        text: result.mensagem_sistema || 'Lembrete agendado com sucesso e isolado para o perfil do usuário.',
-      });
-      setTimeout(() => setFeedbackMessage(null), 6000);
-    } catch (err: any) {
-      setFeedbackMessage({
-        type: 'erro',
-        text: err?.message || 'Não foi possível processar o lembrete. Tente novamente.',
-      });
     }
   };
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputText.trim()) return;
-    await handleSubmitWithData();
+    const textToSubmit = inputText.trim();
+    if (!textToSubmit) return;
+
+    // Stop recording if active
+    if (isRecording) {
+      stopVoiceCapture();
+    }
+
+    try {
+      const result = await processAiCommand({
+        texto: textToSubmit,
+        antecedenciaPadrao: selectedAntecedencia,
+      });
+
+      setInputText('');
+      setSpeechTranscript('');
+      setFeedbackMessage({
+        type: 'sucesso',
+        text: result.mensagem_sistema || 'Lembrete agendado e salvo com sucesso no Firebase!',
+      });
+      setTimeout(() => setFeedbackMessage(null), 6000);
+    } catch (err: any) {
+      setFeedbackMessage({
+        type: 'erro',
+        text: err?.message || 'Não foi possível agendar o lembrete. Tente novamente.',
+      });
+    }
   };
 
   const selectSuggestion = (text: string) => {
@@ -203,14 +161,14 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-400">
-            <Sparkles className="w-4 h-4 text-amber-400" />
+            <CalendarCheck className="w-4 h-4 text-emerald-400" />
           </div>
           <div>
             <h2 className="text-sm font-bold text-white tracking-wide">
               Comando por Voz ou Texto
             </h2>
             <p className="text-[11px] text-slate-400">
-              Cérebro IA extrai tarefa, data/hora e antecedência automaticamente
+              Processamento local ágil &bull; Identifica tarefa, data, hora e urgência
             </p>
           </div>
         </div>
@@ -218,7 +176,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         <button
           onClick={onOpenManualModal}
           className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-indigo-300 py-1 px-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 transition"
-          title="Agendamento tradicional por data e hora"
+          title="Agendamento manual por data e hora"
         >
           <Sliders className="w-3 h-3 text-indigo-400" />
           Manual
@@ -232,8 +190,8 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
             rows={2}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder='Fale ou digite: "Me lembre amanhã às 12h de verificar o cadastro XPTO"...'
-            disabled={isProcessingAi || isRecording}
+            placeholder='Fale ou digite: "Me lembre amanhã às 12h de verificar o cadastro"...'
+            disabled={isProcessingAi}
             className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-400 focus:outline-none resize-none disabled:opacity-50"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -275,7 +233,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
             {/* Actions: Mic & Submit */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* Voice button */}
+              {/* Voice button (Native Web Speech API) */}
               <button
                 type="button"
                 onClick={isRecording ? stopVoiceCapture : startVoiceCapture}
@@ -285,7 +243,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                     ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40 scale-105 animate-pulse'
                     : 'bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-900 active:scale-95'
                 }`}
-                title={isRecording ? 'Parar gravação' : 'Gravar comando de voz'}
+                title={isRecording ? 'Parar gravação' : 'Gravar comando por voz (Web Speech API)'}
               >
                 {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 {isRecording && (
@@ -296,16 +254,16 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                 )}
               </button>
 
-              {/* Submit AI Button */}
+              {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isProcessingAi || isRecording || !inputText.trim()}
+                disabled={isProcessingAi || !inputText.trim()}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
               >
                 {isProcessingAi ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Processando...</span>
+                    <span>Agendando...</span>
                   </>
                 ) : (
                   <>
@@ -327,7 +285,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
             </span>
-            <span className="font-semibold">Ouvindo... ({recordingSeconds}s)</span>
+            <span className="font-semibold">Ouvindo pelo microfone... ({recordingSeconds}s)</span>
             <span className="text-[11px] text-rose-300/80 truncate max-w-[200px]">
               {speechTranscript || 'Fale seu lembrete agora...'}
             </span>
@@ -357,7 +315,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
           )}
           <div className="flex-1">
             <p className="font-semibold">
-              {feedbackMessage.type === 'sucesso' ? 'Cérebro IA Confirmado' : 'Aviso do Sistema'}
+              {feedbackMessage.type === 'sucesso' ? 'Lembrete Confirmado' : 'Aviso do Sistema'}
             </p>
             <p className="text-[11px] mt-0.5 text-slate-300">{feedbackMessage.text}</p>
           </div>

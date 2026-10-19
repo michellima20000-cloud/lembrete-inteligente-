@@ -391,8 +391,6 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         body: JSON.stringify({
           user_id: currentUser.id,
           texto: params.texto,
-          audioBase64: params.audioBase64,
-          audioMimeType: params.audioMimeType,
           currentLocalTime: localIso,
           fusoHorario: Intl.DateTimeFormat().resolvedOptions().timeZone,
           antecedencia_padrao: params.antecedenciaPadrao || 0,
@@ -401,7 +399,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.mensagem || 'Falha ao processar comando com IA.');
+        throw new Error(errorData.mensagem || 'Falha ao processar comando de lembrete.');
       }
 
       const data: AiParseResponse = await res.json();

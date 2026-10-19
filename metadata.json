@@ -1,6 +1,6 @@
 {
   "name": "Lembrete Inteligente",
-  "description": "Cérebro de IA para agendamento e gestão de lembretes inteligentes com isolamento estrito multi-usuário e comandos por voz.",
+  "description": "Agenda inteligente de lembretes locais com sincronização em tempo real no Firebase Cloud e comandos por voz.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
