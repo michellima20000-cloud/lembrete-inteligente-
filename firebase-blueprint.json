@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with isolation properties",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user ID"
+        },
+        "nome": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "avatarCor": {
+          "type": "string",
+          "description": "Avatar hex color"
+        },
+        "criado_em": {
+          "type": "string",
+          "description": "Creation ISO date"
+        }
+      },
+      "required": ["id", "nome", "avatarCor"]
+    },
+    "Lembrete": {
+      "title": "Lembrete",
+      "description": "Intelligent reminder entity isolated by user",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Reminder unique ID"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner user account ID"
+        },
+        "titulo": {
+          "type": "string",
+          "description": "Task description"
+        },
+        "data_hora_execucao": {
+          "type": "string",
+          "description": "Execution timestamp ISO format AAAA-MM-DDTHH:MM:SS"
+        },
+        "antecedencia_minutos": {
+          "type": "number",
+          "description": "Minutes before alert (0, 5, 10, 15, 30)"
+        },
+        "status_tarefa": {
+          "type": "string",
+          "enum": ["pendente", "concluído", "adiado"],
+          "description": "Task status"
+        },
+        "categoria": {
+          "type": "string",
+          "description": "Category name"
+        },
+        "urgencia": {
+          "type": "string",
+          "enum": ["baixa", "media", "alta"],
+          "description": "Urgency level"
+        },
+        "criado_em": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "adiado_vezes": {
+          "type": "number",
+          "description": "Count of times postponed"
+        }
+      },
+      "required": ["id", "user_id", "titulo", "data_hora_execucao", "status_tarefa"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of user profiles"
+    },
+    "/users/{userId}/reminders/{reminderId}": {
+      "schema": "Lembrete",
+      "description": "Strictly isolated collection of reminders for the user"
+    }
+  }
+}

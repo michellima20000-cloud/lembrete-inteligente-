@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="50%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#4338ca" />
+    </linearGradient>
+    <linearGradient id="bell" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <!-- Background with squircle/rounded rect -->
+  <rect width="512" height="512" rx="128" fill="url(#grad)" />
+  
+  <!-- Subtle decorative ring -->
+  <circle cx="256" cy="256" r="180" stroke="#818cf8" stroke-width="4" stroke-opacity="0.25" fill="none" stroke-dasharray="8 8" />
+  
+  <!-- Glowing brain/bell combo icon -->
+  <g filter="url(#shadow)" transform="translate(106, 106)">
+    <!-- Main Bell Body -->
+    <path d="M150 40 C110 40 80 70 80 120 L80 180 C80 200 65 215 50 225 C45 228 45 235 50 238 L250 238 C255 235 255 228 250 225 C235 215 220 200 220 180 L220 120 C220 70 190 40 150 40 Z" fill="url(#bell)" />
+    <!-- Bell Top Ring -->
+    <circle cx="150" cy="30" r="16" fill="none" stroke="#fef3c7" stroke-width="8" />
+    <!-- Bell Clapper -->
+    <path d="M125 242 C125 256 136 268 150 268 C164 268 175 256 175 242 Z" fill="#d97706" />
+    
+    <!-- AI Sparkle Neural Elements -->
+    <path d="M220 70 Q240 50 250 30 Q260 50 280 70 Q260 90 250 110 Q240 90 220 70 Z" fill="#ffffff" opacity="0.95" />
+    <circle cx="250" cy="70" r="4" fill="#60a5fa" />
+    
+    <path d="M30 110 Q45 95 55 80 Q65 95 80 110 Q65 125 55 140 Q45 125 30 110 Z" fill="#ffffff" opacity="0.85" transform="scale(0.7) translate(10, 50)" />
+  </g>
+</svg>
