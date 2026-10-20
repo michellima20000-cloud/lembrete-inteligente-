@@ -233,6 +233,15 @@ app.post('/api/lembrete/parse', (req: Request, res: Response) => {
     antecedencia_padrao,
   });
 
+  if (parsedData.status === 'erro') {
+    return res.status(400).json({
+      status: 'erro',
+      user_id,
+      mensagem: parsedData.mensagem_sistema,
+      mensagem_sistema: parsedData.mensagem_sistema,
+    });
+  }
+
   // Automatically persist to the user's isolated list
   const newReminder: Lembrete = {
     id: 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),

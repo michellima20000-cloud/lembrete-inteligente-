@@ -441,26 +441,42 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
 
         const isJson = res.headers.get('content-type')?.includes('application/json');
-        if (res.ok && isJson) {
+        if (isJson) {
           const json = await res.json();
-          if (json.status !== 'erro' && json.lembrete) {
+          if (json.status === 'erro') {
+            throw new Error(json.mensagem || json.mensagem_sistema || 'Não foi possível interpretar o lembrete.');
+          }
+          if (json.lembrete) {
             data = json;
           } else {
-            throw new Error(json.mensagem_sistema || 'Fallback parsing');
+            throw new Error('Resposta inválida do servidor');
           }
         } else {
-          throw new Error('Fallback parsing');
+          throw new Error('Falha de conexão com o servidor');
         }
-      } catch (networkErr) {
-        // ROBUST MOBILE RESILIENCE:
-        // Execute client-side deterministic parser if network is slow, offline, or returns error
-        console.warn('Network issue or offline, executing local client parser fallback:', networkErr);
+      } catch (err: any) {
+        // If it was already a specific user-facing validation error from the server, rethrow it
+        if (
+          err?.message &&
+          (err.message.includes('informe') ||
+            err.message.includes('tarefa') ||
+            err.message.includes('obrigatório') ||
+            err.message.includes('Nenhum texto'))
+        ) {
+          throw err;
+        }
+
+        // Local client parser fallback for offline or network issues
         const parsed = parseReminderCommand({
           texto: params.texto || '',
           referenceTime: localIso,
           user_id: effectiveUserId,
           antecedencia_padrao: params.antecedenciaPadrao || 0,
         });
+
+        if (parsed.status === 'erro') {
+          throw new Error(parsed.mensagem_sistema);
+        }
 
         const newId = 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
         data = {
