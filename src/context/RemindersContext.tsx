@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Lembrete, StatusTarefa, AiParseResponse } from '../types';
 import { useUser } from './UserContext';
 import { soundAlert } from '../utils/audioAlert';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { parseReminderCommand } from '../utils/reminderParser';
 
@@ -108,7 +108,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const res = await fetch(`/api/reminders?user_id=${encodeURIComponent(currentUser.id)}`, {
         headers: { 'x-user-id': currentUser.id },
       });
-      if (res.ok) {
+      const isJson = res.headers.get('content-type')?.includes('application/json');
+      if (res.ok && isJson) {
         const data = await res.json();
         if (data.lembretes && Array.isArray(data.lembretes)) {
           const verified = data.lembretes.filter((item: Lembrete) => item.user_id === currentUser.id);
@@ -261,10 +262,18 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         adiado_vezes: (existing.adiado_vezes || 0) + 1,
       };
       syncItemToFirestore(updatedItem);
+
+      setReminders((prev) => {
+        const updated = prev.map((item) => (item.id === id ? updatedItem : item));
+        updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
+        saveLocalPartition(currentUser.id, updated);
+        return updated;
+      });
+      soundAlert.playSuccess();
     }
 
     try {
-      const res = await fetch(`/api/reminders/${id}`, {
+      await fetch(`/api/reminders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -272,36 +281,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           adiar_minutos: minutes,
         }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        soundAlert.playSuccess();
-        setReminders((prev) => {
-          const updated = prev.map((item) => (item.id === id ? data.lembrete : item));
-          updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-          saveLocalPartition(currentUser.id, updated);
-          return updated;
-        });
-      } else {
-        setReminders((prev) => {
-          const updated = prev.map((item) => {
-            if (item.id === id) {
-              return {
-                ...item,
-                data_hora_execucao: newExecTime,
-                status_tarefa: 'adiado' as StatusTarefa,
-                adiado_vezes: (item.adiado_vezes || 0) + 1,
-              };
-            }
-            return item;
-          });
-          updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-          saveLocalPartition(currentUser.id, updated);
-          return updated;
-        });
-      }
     } catch (e) {
-      console.error('Error snoozing reminder:', e);
+      // Backend not running (e.g. static hosting on Vercel)
     } finally {
       if (activeAlarmReminder?.id === id) {
         setActiveAlarmReminder(null);
@@ -321,11 +302,18 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       syncItemToFirestore(updatedItem);
     }
 
-    try {
-      if (status === 'concluído') {
-        soundAlert.playSuccess();
-      }
+    if (status === 'concluído') {
+      soundAlert.playSuccess();
+    }
 
+    setReminders((prev) => {
+      const updated = prev.map((item) => (item.id === id ? { ...item, status_tarefa: status } : item));
+      updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
+      saveLocalPartition(currentUser.id, updated);
+      return updated;
+    });
+
+    try {
       await fetch(`/api/reminders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -334,15 +322,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           status_tarefa: status,
         }),
       });
-
-      setReminders((prev) => {
-        const updated = prev.map((item) => (item.id === id ? { ...item, status_tarefa: status } : item));
-        updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-        saveLocalPartition(currentUser.id, updated);
-        return updated;
-      });
     } catch (e) {
-      console.error('Error updating status:', e);
+      // Backend not running (e.g. static hosting on Vercel)
     } finally {
       if (activeAlarmReminder?.id === id) {
         setActiveAlarmReminder(null);
@@ -354,19 +335,19 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!currentUser?.id) return;
     deleteItemFromFirestore(id);
 
+    setReminders((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      saveLocalPartition(currentUser.id, updated);
+      return updated;
+    });
+
     try {
       await fetch(`/api/reminders/${id}?user_id=${encodeURIComponent(currentUser.id)}`, {
         method: 'DELETE',
         headers: { 'x-user-id': currentUser.id },
       });
-
-      setReminders((prev) => {
-        const updated = prev.filter((item) => item.id !== id);
-        saveLocalPartition(currentUser.id, updated);
-        return updated;
-      });
     } catch (e) {
-      console.error('Error deleting reminder:', e);
+      console.warn('Backend delete notification deferred:', e);
     }
   };
 
@@ -399,10 +380,13 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }),
         });
 
-        if (res.ok) {
-          data = await res.json();
-          if (data.status === 'erro' || !data.lembrete) {
-            throw new Error(data.mensagem_sistema || 'Fallback parsing');
+        const isJson = res.headers.get('content-type')?.includes('application/json');
+        if (res.ok && isJson) {
+          const json = await res.json();
+          if (json.status !== 'erro' && json.lembrete) {
+            data = json;
+          } else {
+            throw new Error(json.mensagem_sistema || 'Fallback parsing');
           }
         } else {
           throw new Error('Fallback parsing');
@@ -437,7 +421,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (data.lembrete && data.lembrete.id) {
         const fullItem: Lembrete = {
           id: data.lembrete.id,
-          user_id: currentUser.id,
+          user_id: effectiveUserId,
           titulo: data.lembrete.titulo,
           data_hora_execucao: data.lembrete.data_hora_execucao,
           antecedencia_minutos: data.lembrete.antecedencia_minutos || 0,
@@ -454,7 +438,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setReminders((prev) => {
           const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
           updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-          saveLocalPartition(currentUser.id, updated);
+          saveLocalPartition(effectiveUserId, updated);
           return updated;
         });
       }
@@ -474,33 +458,42 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     urgencia?: 'baixa' | 'media' | 'alta';
   }) => {
     if (!currentUser?.id) return;
+
+    const newId = 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const fullItem: Lembrete = {
+      id: newId,
+      user_id: currentUser.id,
+      titulo: data.titulo.trim(),
+      data_hora_execucao: data.data_hora_execucao,
+      antecedencia_minutos: Number(data.antecedencia_minutos) || 0,
+      status_tarefa: 'pendente',
+      categoria: data.categoria || 'Geral',
+      urgencia: data.urgencia || 'media',
+      criado_em: new Date().toISOString(),
+      adiado_vezes: 0,
+    };
+
+    // 1. Instantly update UI and localStorage
+    setReminders((prev) => {
+      const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
+      updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
+      saveLocalPartition(currentUser.id, updated);
+      return updated;
+    });
+
+    // 2. Realtime sync to Firestore
+    syncItemToFirestore(fullItem);
+    soundAlert.playSuccess();
+
+    // 3. Notify backend API if available
     try {
-      const res = await fetch('/api/reminders', {
+      await fetch('/api/reminders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          ...data,
-        }),
+        body: JSON.stringify(fullItem),
       });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.lembrete) {
-          syncItemToFirestore({
-            id: json.lembrete.id,
-            user_id: currentUser.id,
-            ...data,
-            status_tarefa: 'pendente',
-            criado_em: new Date().toISOString(),
-            adiado_vezes: 0,
-          });
-        }
-        soundAlert.playSuccess();
-        await fetchReminders();
-      }
     } catch (e) {
-      console.error('Error creating manual reminder:', e);
+      // Backend not running (e.g. static hosting on Vercel)
     }
   };
 

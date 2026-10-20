@@ -2,6 +2,64 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Ensure window.fetch is writable and configurable to prevent chrome extensions
+      // from throwing "Cannot set property fetch of #<Window> which has only a getter"
+      try {
+        const origFetch = window.fetch;
+        if (origFetch) {
+          let activeFetch = origFetch;
+          Object.defineProperty(window, 'fetch', {
+            get() {
+              return activeFetch;
+            },
+            set(newVal) {
+              activeFetch = newVal;
+            },
+            configurable: true,
+            enumerable: true,
+          });
+        }
+      } catch (err) {
+        // Fallback if property is non-configurable in some engine
+      }
+
+      // Suppress unhandled errors originating from external browser extensions
+      window.addEventListener(
+        'error',
+        function (event) {
+          if (
+            event.filename &&
+            (event.filename.startsWith('chrome-extension://') ||
+              event.filename.startsWith('moz-extension://') ||
+              event.filename.startsWith('safari-web-extension://'))
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return true;
+          }
+        },
+        true
+      );
+
+      window.addEventListener(
+        'unhandledrejection',
+        function (event) {
+          const reason = event.reason;
+          const stack = reason && (reason.stack || String(reason));
+          if (
+            stack &&
+            (stack.includes('chrome-extension://') ||
+              stack.includes('moz-extension://') ||
+              stack.includes('safari-web-extension://'))
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        },
+        true
+      );
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Lembrete Inteligente</title>
     <meta name="description" content="Agenda inteligente de lembretes locais com sincronização em tempo real no Firebase Cloud e comandos por voz." />

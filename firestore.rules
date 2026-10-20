@@ -16,48 +16,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function isValidUserProfile(data) {
-      return data.keys().hasAll(['id', 'nome', 'avatarCor']) &&
-             data.id is string && data.id.size() <= 128 &&
-             data.nome is string && data.nome.size() > 0 && data.nome.size() <= 100 &&
-             data.avatarCor is string && data.avatarCor.size() <= 32;
-    }
-
-    function isValidLembrete(data, userId) {
-      return data.keys().hasAll(['id', 'user_id', 'titulo', 'data_hora_execucao', 'status_tarefa']) &&
-             data.user_id == userId &&
-             data.titulo is string && data.titulo.size() > 0 && data.titulo.size() <= 500 &&
-             data.data_hora_execucao is string && data.data_hora_execucao.size() <= 32 &&
-             data.status_tarefa in ['pendente', 'concluído', 'adiado'];
-    }
-
     // User Profile: strictly isolated by userId
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
-      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
-      allow delete: if isOwner(userId) && isValidId(userId);
+      allow read, write: if isOwner(userId);
 
       // Reminders subcollection: strictly partitioned under the owner's document
       match /reminders/{reminderId} {
-        allow get: if isOwner(userId) && isValidId(reminderId);
-        allow list: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(reminderId) && isValidLembrete(incoming(), userId);
-        allow update: if isOwner(userId) && isValidId(reminderId) && isValidLembrete(incoming(), userId);
-        allow delete: if isOwner(userId) && isValidId(reminderId);
+        allow read, write: if isOwner(userId);
       }
     }
   }
