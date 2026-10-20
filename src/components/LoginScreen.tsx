@@ -15,7 +15,7 @@ import { useUser } from '../context/UserContext';
 import { PWAInstallButton } from './PWAInstallButton';
 
 export const LoginScreen: React.FC = () => {
-  const { signInWithEmail, signUpWithEmail, signInAsGuest, authError, clearAuthError } = useUser();
+  const { signInWithEmail, signUpWithEmail, authError, clearAuthError } = useUser();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -212,21 +212,6 @@ export const LoginScreen: React.FC = () => {
                 : 'Já possui uma conta? Fazer login'}
             </button>
           </div>
-
-          <div className="relative flex py-3 items-center">
-            <div className="flex-grow border-t border-slate-800"></div>
-            <span className="flex-shrink mx-3 text-[10px] text-slate-500 uppercase tracking-wider">ou</span>
-            <div className="flex-grow border-t border-slate-800"></div>
-          </div>
-
-          {/* Guest / Demo Login Button */}
-          <button
-            type="button"
-            onClick={signInAsGuest}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 font-semibold text-xs transition active:scale-[0.98] cursor-pointer"
-          >
-            <span>Entrar como Convidado (Modo Demonstração)</span>
-          </button>
 
           {/* Production & Security badge */}
           <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
