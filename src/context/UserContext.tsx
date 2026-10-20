@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
-import { auth, googleProvider } from '../lib/firebase';
+import { auth } from '../lib/firebase';
 import {
   onAuthStateChanged,
-  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
   signInAnonymously,
   signOut as fbSignOut,
   User as FirebaseUser,
@@ -14,7 +16,8 @@ interface UserContextType {
   firebaseUser: FirebaseUser | null;
   isAuthenticated: boolean;
   isAuthReady: boolean;
-  signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, pass: string) => Promise<void>;
+  signUpWithEmail: (email: string, pass: string, name?: string) => Promise<void>;
   signInAsGuest: () => Promise<void>;
   signOutFirebase: () => Promise<void>;
   authError: string | null;
@@ -45,7 +48,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (user) {
           const profile: UserProfile = {
             id: user.uid,
-            nome: user.displayName || user.email?.split('@')[0] || (user.isAnonymous ? 'Convidado' : 'Usuário Google'),
+            nome: user.displayName || user.email?.split('@')[0] || (user.isAnonymous ? 'Convidado' : 'Usuário Firebase'),
             email: user.email || undefined,
             avatarCor: '#4f46e5',
             criado_em: user.metadata.creationTime || new Date().toISOString(),
@@ -85,21 +88,48 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  const signInWithGoogle = async () => {
+  const signInWithEmail = async (email: string, pass: string) => {
     setAuthError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
     } catch (err: any) {
-      console.warn('Google Sign-in failed or was cancelled:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        setAuthError('O login com Google foi cancelado antes de concluir.');
-      } else if (err.code === 'auth/popup-blocked') {
-        setAuthError('O navegador bloqueou o pop-up. Você pode tentar novamente ou entrar como Convidado.');
-      } else if (err.code === 'auth/unauthorized-domain') {
-        setAuthError('Domínio de preview não autorizado no Firebase Console. Utilize a opção "Entrar como Convidado" para testar todas as funcionalidades.');
+      console.warn('Firebase email sign-in failed:', err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+        setAuthError('E-mail ou senha incorretos na conta Firebase.');
+      } else if (err.code === 'auth/invalid-email') {
+        setAuthError('O formato do e-mail informado é inválido.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setAuthError('Muitas tentativas sem sucesso. Aguarde alguns instantes e tente novamente.');
       } else {
-        setAuthError(err.message || 'Falha ao autenticar com o Google. Você pode acessar como Convidado para testar.');
+        setAuthError(err.message || 'Falha ao autenticar com a conta Firebase.');
       }
+      throw err;
+    }
+  };
+
+  const signUpWithEmail = async (email: string, pass: string, name?: string) => {
+    setAuthError(null);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+      if (name && name.trim()) {
+        try {
+          await updateProfile(cred.user, { displayName: name.trim() });
+        } catch (e) {
+          console.warn('Could not update displayName:', e);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Firebase email sign-up failed:', err);
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError('Este e-mail já está cadastrado no Firebase. Utilize a opção "Entrar".');
+      } else if (err.code === 'auth/weak-password') {
+        setAuthError('A senha deve ter pelo menos 6 caracteres.');
+      } else if (err.code === 'auth/invalid-email') {
+        setAuthError('O formato do e-mail informado é inválido.');
+      } else {
+        setAuthError(err.message || 'Falha ao criar conta no Firebase.');
+      }
+      throw err;
     }
   };
 
@@ -151,7 +181,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         firebaseUser,
         isAuthenticated: !!currentUser,
         isAuthReady,
-        signInWithGoogle,
+        signInWithEmail,
+        signUpWithEmail,
         signInAsGuest,
         signOutFirebase,
         authError,
