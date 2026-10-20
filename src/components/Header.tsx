@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, LogOut, Bell, Flame, CalendarCheck } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, Flame, CalendarCheck } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -7,12 +7,7 @@ import { UserAccountModal } from './UserAccountModal';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
-  const {
-    soundEnabled,
-    toggleSound,
-    notificationPermission,
-    requestNotificationPermission,
-  } = useReminders();
+  const { soundEnabled, toggleSound } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
 
@@ -55,26 +50,15 @@ export const Header: React.FC = () => {
             {/* Sound Toggle */}
             <button
               onClick={toggleSound}
-              className={`p-2 rounded-xl transition-colors ${
+              className={`p-2 rounded-xl transition-colors cursor-pointer ${
                 soundEnabled
                   ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/60'
                   : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'
               }`}
-              title={soundEnabled ? 'Som ativado' : 'Som desativado'}
+              title={soundEnabled ? 'Som ativado (clique para desativar)' : 'Som desativado (clique para ativar)'}
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
-
-            {/* Notification Permission Request */}
-            {notificationPermission !== 'granted' && (
-              <button
-                onClick={requestNotificationPermission}
-                className="p-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition animate-pulse"
-                title="Ativar Notificações do Navegador"
-              >
-                <Bell className="w-4 h-4" />
-              </button>
-            )}
 
             {/* Authenticated User Chip */}
             {currentUser && (

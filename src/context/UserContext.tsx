@@ -26,6 +26,7 @@ interface UserContextType {
   signOutFirebase: () => Promise<void>;
   authError: string | null;
   clearAuthError: () => void;
+  recentEmails: string[];
 }
 
 const UserContext = createContext<UserContextType | null>(null);
@@ -34,14 +35,39 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     try {
-      const stored = localStorage.getItem('lembrete_guest_user');
-      return stored ? JSON.parse(stored) : null;
+      const storedAuth = localStorage.getItem('lembrete_authenticated_user');
+      if (storedAuth) {
+        return JSON.parse(storedAuth);
+      }
+      const storedGuest = localStorage.getItem('lembrete_guest_user');
+      return storedGuest ? JSON.parse(storedGuest) : null;
     } catch {
       return null;
     }
   });
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [recentEmails, setRecentEmails] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('lembrete_recent_emails');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const rememberEmail = (email: string) => {
+    try {
+      const clean = email.trim().toLowerCase();
+      if (!clean) return;
+      localStorage.setItem('lembrete_saved_email', clean);
+      setRecentEmails((prev) => {
+        const next = [clean, ...prev.filter((e) => e !== clean)].slice(0, 4);
+        localStorage.setItem('lembrete_recent_emails', JSON.stringify(next));
+        return next;
+      });
+    } catch {}
+  };
 
   // Listen to authoritative Firebase Auth state
   useEffect(() => {
@@ -59,7 +85,11 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           setCurrentUser(profile);
           try {
+            localStorage.setItem('lembrete_authenticated_user', JSON.stringify(profile));
             localStorage.removeItem('lembrete_guest_user');
+            if (user.email) {
+              rememberEmail(user.email);
+            }
           } catch {}
 
           // Register in backend
@@ -69,16 +99,36 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             body: JSON.stringify(profile),
           }).catch(() => {});
         } else {
-          // If no Firebase user, check if we had a guest session
-          try {
-            const stored = localStorage.getItem('lembrete_guest_user');
-            if (stored) {
-              setCurrentUser(JSON.parse(stored));
-            } else {
+          // If no Firebase user session yet (e.g. reload inside iframe):
+          // Check if we have a persistent user session
+          const hasSavedUser = localStorage.getItem('lembrete_authenticated_user');
+          const savedEmail = localStorage.getItem('lembrete_saved_email');
+          const savedPass = localStorage.getItem('lembrete_saved_pass');
+
+          // If we had stored credentials, attempt silent background reconnect
+          if (savedEmail && savedPass && !auth.currentUser) {
+            signInWithEmailAndPassword(auth, savedEmail, savedPass).catch((e) => {
+              console.warn('Background silent reconnect deferred:', e?.message);
+            });
+          }
+
+          if (hasSavedUser) {
+            try {
+              setCurrentUser(JSON.parse(hasSavedUser));
+            } catch {
               setCurrentUser(null);
             }
-          } catch {
-            setCurrentUser(null);
+          } else {
+            try {
+              const storedGuest = localStorage.getItem('lembrete_guest_user');
+              if (storedGuest) {
+                setCurrentUser(JSON.parse(storedGuest));
+              } else {
+                setCurrentUser(null);
+              }
+            } catch {
+              setCurrentUser(null);
+            }
           }
         }
         setIsAuthReady(true);
@@ -99,8 +149,9 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      rememberEmail(cleanEmail);
       try {
-        localStorage.setItem('lembrete_saved_email', cleanEmail);
+        localStorage.setItem('lembrete_saved_pass', cleanPass);
       } catch {}
       return;
     } catch (err: any) {
@@ -108,8 +159,9 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cleanPass !== pass) {
         try {
           await signInWithEmailAndPassword(auth, cleanEmail, pass);
+          rememberEmail(cleanEmail);
           try {
-            localStorage.setItem('lembrete_saved_email', cleanEmail);
+            localStorage.setItem('lembrete_saved_pass', pass);
           } catch {}
           return;
         } catch {}
@@ -121,7 +173,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         err.code === 'auth/wrong-password' ||
         err.code === 'auth/user-not-found'
       ) {
-        setAuthError('E-mail ou senha incorretos na conta Firebase.');
+        setAuthError('E-mail ou senha incorretos ou esta conta ainda não foi cadastrada no Firebase.');
       } else if (err.code === 'auth/invalid-email') {
         setAuthError('O formato do e-mail informado é inválido.');
       } else if (err.code === 'auth/too-many-requests') {
@@ -139,8 +191,9 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = pass.trim();
     try {
       const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      rememberEmail(cleanEmail);
       try {
-        localStorage.setItem('lembrete_saved_email', cleanEmail);
+        localStorage.setItem('lembrete_saved_pass', cleanPass);
       } catch {}
       if (name && name.trim()) {
         try {
@@ -156,16 +209,18 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // If account already exists in Firebase, try logging in immediately with both clean and raw password!
         try {
           await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+          rememberEmail(cleanEmail);
           try {
-            localStorage.setItem('lembrete_saved_email', cleanEmail);
+            localStorage.setItem('lembrete_saved_pass', cleanPass);
           } catch {}
           return;
         } catch (loginErr: any) {
           if (cleanPass !== pass) {
             try {
               await signInWithEmailAndPassword(auth, cleanEmail, pass);
+              rememberEmail(cleanEmail);
               try {
-                localStorage.setItem('lembrete_saved_email', cleanEmail);
+                localStorage.setItem('lembrete_saved_pass', pass);
               } catch {}
               return;
             } catch {}
@@ -249,6 +304,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOutFirebase = async () => {
     try {
       localStorage.removeItem('lembrete_guest_user');
+      localStorage.removeItem('lembrete_authenticated_user');
+      localStorage.removeItem('lembrete_saved_pass');
       await fbSignOut(auth);
     } catch (err: any) {
       console.error('Erro ao sair da conta:', err);
@@ -277,6 +334,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOutFirebase,
         authError,
         clearAuthError,
+        recentEmails,
       }}
     >
       {children}

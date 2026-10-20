@@ -24,7 +24,8 @@ export interface ParseReminderResult {
 
 /**
  * Cleans speech transcripts by removing duplicate repeated words and phrases
- * caused by Android Chrome Web Speech API stream duplication.
+ * caused by Android Chrome Web Speech API stream duplication, while preserving
+ * natural Portuguese speech phrasing.
  */
 export function cleanSpokenTranscript(raw: string): string {
   if (!raw) return '';
@@ -32,7 +33,8 @@ export function cleanSpokenTranscript(raw: string): string {
 
   // 1. Remove consecutive identical words (case-insensitive, unicode-safe)
   // e.g. "lembrar lembrar de de pagar" -> "lembrar de pagar"
-  text = text.replace(/([a-zA-Z\u00C0-\u017F0-9_]+)(?:\s+\1)+(?=[^\w\u00C0-\u017F]|$)/gi, '$1');
+  // Skip short 1-letter words like "e", "a", "o" unless 3+ times
+  text = text.replace(/\b([a-zA-Z\u00C0-\u017F0-9_]{2,})(?:\s+\1)+(?=[^\w\u00C0-\u017F]|$)/gi, '$1');
 
   // 2. Remove repeated consecutive phrases (e.g. "pagar o boleto pagar o boleto")
   const words = text.split(/\s+/);
@@ -53,9 +55,158 @@ export function cleanSpokenTranscript(raw: string): string {
   return text.trim();
 }
 
+/**
+ * Normalizes spoken Portuguese numbers, colloquial times, and relative phrases
+ * into crisp, standardized time formats.
+ */
+export function normalizeSpokenPortugueseNumbers(raw: string): string {
+  if (!raw) return '';
+  let text = ' ' + raw.toLowerCase() + ' ';
+
+  // Special time expressions
+  text = text.replace(/\bmeio[- ]dia e meia\b/gi, ' às 12:30 ');
+  text = text.replace(/\bmeio[- ]dia e meio\b/gi, ' às 12:30 ');
+  text = text.replace(/\bmeio[- ]dia\b/gi, ' às 12:00 ');
+  text = text.replace(/\bmeia[- ]noite e meia\b/gi, ' às 00:30 ');
+  text = text.replace(/\bmeia[- ]noite\b/gi, ' às 00:00 ');
+  text = text.replace(/\bmeia[- ]hora\b/gi, ' 30 minutos ');
+
+  // Colloquial Brazilian Portuguese "X para as Y" / "X pras Y" (e.g., 10 pras 3 -> 14:50)
+  const colloquialHourMap: Record<string, number> = {
+    'uma': 13, 'um': 13, '1': 13,
+    'duas': 14, 'dois': 14, '2': 14,
+    'três': 15, 'tres': 15, '3': 15,
+    'quatro': 16, '4': 16,
+    'cinco': 17, '5': 17,
+    'seis': 18, '6': 18,
+    'sete': 19, '7': 19,
+    'oito': 20, '8': 20,
+    'nove': 21, '9': 21,
+    'dez': 22, '10': 22,
+    'onze': 23, '11': 23,
+    'doze': 12, '12': 12,
+  };
+
+  const colloquialMinMap: Record<string, number> = {
+    'cinco': 5, '5': 5,
+    'dez': 10, '10': 10,
+    'quinze': 15, '15': 15,
+    'vinte': 20, '20': 20,
+    'vinte e cinco': 25, '25': 25,
+  };
+
+  for (const [minWord, minVal] of Object.entries(colloquialMinMap)) {
+    for (const [hWord, hVal] of Object.entries(colloquialHourMap)) {
+      const pattern = new RegExp(`\\b${minWord}\\s+(?:pras|para\\s+as|para\\s+às)\\s+${hWord}\\b`, 'gi');
+      if (pattern.test(text)) {
+        // e.g. 10 pras 3 (15h) = 14:50
+        const prevH = (hVal - 1 + 24) % 24;
+        const targetMin = 60 - minVal;
+        const padH = String(prevH).padStart(2, '0');
+        const padM = String(targetMin).padStart(2, '0');
+        text = text.replace(pattern, ` às ${padH}:${padM} `);
+      }
+    }
+  }
+
+  // Afternoon hours with explicit marker
+  const afternoonHours: Record<string, string> = {
+    'uma': '13:00', 'um': '13:00', '1': '13:00',
+    'duas': '14:00', 'dois': '14:00', '2': '14:00',
+    'três': '15:00', 'tres': '15:00', '3': '15:00',
+    'quatro': '16:00', '4': '16:00',
+    'cinco': '17:00', '5': '17:00',
+    'seis': '18:00', '6': '18:00',
+  };
+  for (const [w, repl] of Object.entries(afternoonHours)) {
+    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da tarde|pela tarde|de tarde)`, 'gi'), ` às ${repl} `);
+  }
+
+  // Evening hours
+  const eveningHours: Record<string, string> = {
+    'sete': '19:00', '7': '19:00',
+    'oito': '20:00', '8': '20:00',
+    'nove': '21:00', '9': '21:00',
+    'dez': '22:00', '10': '22:00',
+    'onze': '23:00', '11': '23:00',
+  };
+  for (const [w, repl] of Object.entries(eveningHours)) {
+    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da noite|pela noite|de noite)`, 'gi'), ` às ${repl} `);
+  }
+
+  // Morning hours
+  const morningHours: Record<string, string> = {
+    'uma': '01:00', 'um': '01:00', '1': '01:00',
+    'duas': '02:00', 'dois': '02:00', '2': '02:00',
+    'três': '03:00', 'tres': '03:00', '3': '03:00',
+    'quatro': '04:00', '4': '04:00',
+    'cinco': '05:00', '5': '05:00',
+    'seis': '06:00', '6': '06:00',
+    'sete': '07:00', '7': '07:00',
+    'oito': '08:00', '8': '08:00',
+    'nove': '09:00', '9': '09:00',
+    'dez': '10:00', '10': '10:00',
+    'onze': '11:00', '11': '11:00',
+  };
+  for (const [w, repl] of Object.entries(morningHours)) {
+    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da manhã|pela manhã|de manhã)`, 'gi'), ` às ${repl} `);
+  }
+
+  // Spoken Portuguese compound and single numbers
+  const wordNumbers: Record<string, string> = {
+    'cinquenta e cinco': '55',
+    'cinquenta': '50',
+    'quarenta e cinco': '45',
+    'quarenta': '40',
+    'trinta e cinco': '35',
+    'trinta': '30',
+    'vinte e cinco': '25',
+    'vinte e quatro': '24',
+    'vinte e três': '23',
+    'vinte e tres': '23',
+    'vinte e dois': '22',
+    'vinte e duas': '22',
+    'vinte e um': '21',
+    'vinte e uma': '21',
+    'vinte': '20',
+    'dezenove': '19',
+    'dezoito': '18',
+    'dezessete': '17',
+    'dezesseis': '16',
+    'quinze': '15',
+    'quatorze': '14',
+    'catorze': '14',
+    'treze': '13',
+    'doze': '12',
+    'onze': '11',
+    'dez': '10',
+    'nove': '9',
+    'oito': '8',
+    'sete': '7',
+    'seis': '6',
+    'cinco': '5',
+    'quatro': '4',
+    'três': '3',
+    'tres': '3',
+    'duas': '2',
+    'dois': '2',
+    'uma': '1',
+    'um': '1',
+  };
+
+  for (const [w, num] of Object.entries(wordNumbers)) {
+    text = text.replace(new RegExp(`(?<=\\b(?:às|as|pras|para\\s+as|daqui\\s+a|em|dia|avise|antes)\\s+)${w}\\b`, 'gi'), num);
+    text = text.replace(new RegExp(`\\b${w}(?=\\s+(?:horas?|minutos?|min|h|dias?|segundos?)\\b)`, 'gi'), num);
+    text = text.replace(new RegExp(`(?<=\\b(?:às|as|pras)\\s+\\d{1,2}\\s+e\\s+)${w}\\b`, 'gi'), num);
+  }
+
+  return text.trim();
+}
+
 export function parseReminderCommand(params: ParseReminderInput): ParseReminderResult {
   const cleanInput = cleanSpokenTranscript(params.texto);
-  const rawText = cleanInput.trim();
+  const normalized = normalizeSpokenPortugueseNumbers(cleanInput);
+  const rawText = normalized.trim();
   const text = rawText.toLowerCase();
 
   // Parse reference time without timezone skew
@@ -113,7 +264,7 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
     } else if (isTomorrow) {
       target.setDate(target.getDate() + 1);
     } else if (isToday) {
-      // Stays explicitly TODAY - never bump to tomorrow!
+      // Stays explicitly TODAY
     } else {
       // Check weekday names
       const weekDays: Record<string, number> = {
@@ -134,6 +285,7 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
         sabado: 6,
       };
 
+      let weekdayFound = false;
       for (const [dayName, dayIndex] of Object.entries(weekDays)) {
         const regex = new RegExp(`(?:^|[^\\w\\u00C0-\\u017F])(?:na\\s+|no\\s+|próxim[ao]\\s+)?${dayName}(?:[^\\w\\u00C0-\\u017F]|$)`, 'i');
         if (regex.test(text)) {
@@ -141,82 +293,122 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
           let daysDiff = dayIndex - currentDay;
           if (daysDiff <= 0) daysDiff += 7;
           target.setDate(target.getDate() + daysDiff);
+          weekdayFound = true;
           break;
+        }
+      }
+
+      // Check specific day of month: "dia 25", "dia 10"
+      if (!weekdayFound) {
+        const dayOfMonthMatch = text.match(/(?:^|[^\w\u00C0-\u017F])dia\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
+        if (dayOfMonthMatch) {
+          const targetDay = parseInt(dayOfMonthMatch[1], 10);
+          if (targetDay >= 1 && targetDay <= 31) {
+            target.setDate(targetDay);
+            if (target.getTime() < ref.getTime()) {
+              target.setMonth(target.getMonth() + 1);
+            }
+          }
         }
       }
     }
 
     // 4. Specific Time
-    // Matches: "às 14h", "14h30", "às 14:30", "15 horas", "às 15", "para às 18h", etc.
-    const timeMatch =
-      text.match(/(?:às|as|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?(?:[^\w\u00C0-\u017F]|$)/i) ||
+    // Matches: "às 14:30", "14h30", "às 14 e 30", "às 14 e meia", "15 horas", "às 15", "pras 14"
+    const halfPastMatch = text.match(/(?:às|as|pras|para\s+as)?\s*(\d{1,2})\s*e\s*meia(?:[^\w\u00C0-\u017F]|$)/i);
+    const hourAndMinuteMatch = text.match(/(?:às|as|pras|para\s*as|para\s*às)?\s*(\d{1,2})\s*e\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
+    const timeColonOrHMatch = text.match(/(?:às|as|pras|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?(?:[^\w\u00C0-\u017F]|$)/i);
+    const hourOnlyMatch =
       text.match(/(\d{1,2})\s*horas?(?:[^\w\u00C0-\u017F]|$)/i) ||
-      text.match(/(?:às|as|para\s*as|para\s*às)\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
-
-    const halfPastMatch = text.match(/(?:às|as)\s*(\d{1,2})\s*e\s*meia(?:[^\w\u00C0-\u017F]|$)/i);
+      text.match(/(?:às|as|pras|para\s*as|para\s*às)\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
 
     if (halfPastMatch) {
-      const h = parseInt(halfPastMatch[1], 10);
+      let h = parseInt(halfPastMatch[1], 10);
+      if (h >= 1 && h <= 6 && (text.includes('tarde') || ref.getHours() >= 10)) {
+        h += 12;
+      }
       target.setHours(h, 30, 0, 0);
-    } else if (timeMatch) {
-      const hours = parseInt(timeMatch[1], 10);
-      const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    } else if (hourAndMinuteMatch) {
+      let h = parseInt(hourAndMinuteMatch[1], 10);
+      const m = parseInt(hourAndMinuteMatch[2], 10);
+      if (h >= 1 && h <= 6 && (text.includes('tarde') || ref.getHours() >= 10)) {
+        h += 12;
+      }
+      target.setHours(h, m, 0, 0);
+      if (!isToday && !isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
+        target.setDate(target.getDate() + 1);
+      }
+    } else if (timeColonOrHMatch) {
+      let hours = parseInt(timeColonOrHMatch[1], 10);
+      const minutes = timeColonOrHMatch[2] ? parseInt(timeColonOrHMatch[2], 10) : 0;
+      if (hours >= 1 && hours <= 6 && (text.includes('tarde') || (!text.includes('manhã') && ref.getHours() >= 10))) {
+        hours += 12;
+      }
       target.setHours(hours, minutes, 0, 0);
 
-      // Only bump to tomorrow if user did NOT explicitly specify "hoje", "amanhã", or "depois de amanhã"
+      if (!isToday && !isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
+        target.setDate(target.getDate() + 1);
+      }
+    } else if (hourOnlyMatch) {
+      let hours = parseInt(hourOnlyMatch[1], 10);
+      if (hours >= 1 && hours <= 6 && (text.includes('tarde') || (!text.includes('manhã') && ref.getHours() >= 10))) {
+        hours += 12;
+      }
+      target.setHours(hours, 0, 0, 0);
+
       if (!isToday && !isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
         target.setDate(target.getDate() + 1);
       }
     } else {
       // Default time periods if no explicit hour given
-      if (text.includes('de manhã') || text.includes('pela manhã') || text.includes('manha')) {
+      if (text.includes('de manhã') || text.includes('pela manhã') || text.includes('cedo')) {
         target.setHours(9, 0, 0, 0);
       } else if (text.includes('à tarde') || text.includes('a tarde') || text.includes('pela tarde')) {
         target.setHours(14, 0, 0, 0);
+      } else if (text.includes('no fim da tarde') || text.includes('entardecer')) {
+        target.setHours(18, 0, 0, 0);
       } else if (text.includes('à noite') || text.includes('a noite') || text.includes('pela noite')) {
         target.setHours(20, 0, 0, 0);
       } else if (isTomorrow || isAfterTomorrow) {
         target.setHours(9, 0, 0, 0);
       } else if (isToday) {
-        // If explicitly requested for today without specific hour, set to 1 hour from current time or max 23h
         const nextHour = ref.getHours() + 1;
         target.setHours(Math.min(nextHour, 23), 0, 0, 0);
       } else {
-        // Default to 1 hour from current time
         target = new Date(target.getTime() + 60 * 60000);
       }
     }
   }
 
-  // 5. Clean task title by removing command triggers and temporal words
-  let cleanedTitle = rawText
-    .replace(/^(?:por favor\s*,?\s*)?(?:me\s+)?lembre\s*(?:de\s+|para\s+)?/i, '')
-    .replace(/^lembrar\s*(?:de\s+|para\s+)?/i, '')
-    .replace(/^agendar\s*(?:uma\s+tarefa\s+de\s+|um\s+lembrete\s+de\s+|de\s+|para\s+)?/i, '')
-    .replace(/^avise(?:-me)?\s*(?:de\s+|para\s+)?/i, '')
-    .replace(/^n[ãa]o\s+esquecer\s*(?:de\s+|para\s+)?/i, '')
-    .replace(/^criar\s+(?:um\s+)?lembrete\s*(?:de\s+|para\s+)?/i, '');
+  // 5. Clean task title by removing command triggers and temporal words ANYWHERE in text
+  let cleanedTitle = rawText;
 
+  // Remove command prefixes/phrases
   cleanedTitle = cleanedTitle
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])\d{1,2}\s*horas?(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as)\s*\d{1,2}\s*e\s*meia(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*meia\s*hora(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:de\s+manh[ãa]|pela\s+manh[ãa]|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|\b)(?:por\s+favor\s*,?\s*)?(?:me\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\s+esquecer|nao\s+esquecer|criar\s+lembrete|marcar)(?:\s+(?:de|para|que|o|a))?\b/gi, ' ')
+    .replace(/(?:^|\b)(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)\b/gi, ' ')
+    .replace(/(?:^|\b)(?:às|as|pras|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})\b/gi, ' ')
+    .replace(/(?:^|\b)\d{1,2}\s*horas?\b/gi, ' ')
+    .replace(/(?:^|\b)(?:às|as|pras)\s*\d{1,2}\s*e\s*meia\b/gi, ' ')
+    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)\b/gi, ' ')
+    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*meia\s*hora\b/gi, ' ')
+    .replace(/(?:^|\b)(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)\b/gi, ' ')
+    .replace(/(?:^|\b)(?:de\s+manh[ãa]|pela\s+manh[ãa]|cedo|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Strip leading prepositions left behind
-  cleanedTitle = cleanedTitle.replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+)/i, '').trim();
-  if (!cleanedTitle) {
+  // Strip connector words at the beginning or end
+  cleanedTitle = cleanedTitle
+    .replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+|com\s+|sobre\s+)/i, '')
+    .replace(/(?:\s+de|\s+para|\s+às|\s+as)$/i, '')
+    .trim();
+
+  if (!cleanedTitle || cleanedTitle.length < 2) {
     cleanedTitle = rawText || 'Compromisso agendado';
   }
   cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
 
-  // 6. Category classification by keyword matching
+  // 6. Category classification
   let categoria = 'Geral';
   const lTitle = cleanedTitle.toLowerCase();
 
@@ -224,23 +416,23 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
     'reunião', 'reuniao', 'cliente', 'projeto', 'relatório', 'relatorio',
     'proposta', 'chefe', 'apresentação', 'apresentacao', 'email', 'entrega',
     'sprint', 'call', 'alinhar', 'contrato', 'empresa', 'vaga', 'entrevista',
-    'cadastro', 'ticket', 'trabalho'
+    'cadastro', 'ticket', 'trabalho', 'audiência', 'audiencia'
   ];
   const saudeWords = [
     'remédio', 'remedio', 'medicamento', 'água', 'agua', 'médico', 'medico',
     'consulta', 'dentista', 'academia', 'treino', 'pilates', 'exame', 'vacina',
     'caminhar', 'psicólogo', 'psicologo', 'terapia', 'alongar', 'dormir',
-    'hospital', 'saúde', 'saude'
+    'hospital', 'saúde', 'saude', 'pressão', 'pressao', 'insulina'
   ];
   const financasWords = [
     'pagar', 'pagamento', 'boleto', 'conta', 'fatura', 'banco', 'pix',
     'transferência', 'transferencia', 'imposto', 'aluguel', 'luz', 'cartão',
-    'cartao', 'dinheiro', 'salário', 'salario', 'comprar'
+    'cartao', 'dinheiro', 'salário', 'salario', 'comprar', 'depósito', 'deposito'
   ];
   const estudosWords = [
     'estudar', 'estudo', 'prova', 'aula', 'lição', 'licao', 'curso',
     'faculdade', 'tese', 'dever', 'ler', 'livro', 'simulado', 'resumo',
-    'enem', 'escola'
+    'enem', 'escola', 'seminário', 'seminario'
   ];
 
   if (trabalhoWords.some((w) => lTitle.includes(w))) {
@@ -281,7 +473,13 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   )}T${pad(target.getHours())}:${pad(target.getMinutes())}:${pad(target.getSeconds())}`;
 
   const formattedHour = `${pad(target.getHours())}:${pad(target.getMinutes())}`;
-  const dayDesc = isToday ? 'hoje' : isTomorrow ? 'amanhã' : isAfterTomorrow ? 'depois de amanhã' : `${pad(target.getDate())}/${pad(target.getMonth() + 1)}`;
+  const dayDesc = isToday
+    ? 'hoje'
+    : isTomorrow
+    ? 'amanhã'
+    : isAfterTomorrow
+    ? 'depois de amanhã'
+    : `${pad(target.getDate())}/${pad(target.getMonth() + 1)}`;
 
   return {
     status: 'sucesso',

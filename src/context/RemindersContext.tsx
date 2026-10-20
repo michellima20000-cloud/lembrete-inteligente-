@@ -175,6 +175,56 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [currentUser?.id, fetchReminders, saveLocalPartition]);
 
+  // Send Background Notification via Service Worker (Android Chrome / PWA) or Notification API
+  const triggerPushNotification = async (item: Lembrete) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+
+    const title = `⏰ ALARME: ${item.titulo}`;
+    const body =
+      item.antecedencia_minutos > 0
+        ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso!`
+        : `Horário do compromisso alcançado: ${item.titulo}!`;
+
+    // 1. Android Chrome / PWA Service Worker notification (Supports vibration & background wake)
+    if ('serviceWorker' in navigator) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        if (reg && typeof reg.showNotification === 'function') {
+          await reg.showNotification(title, {
+            body,
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            tag: item.id,
+            renotify: true,
+            requireInteraction: true,
+            vibrate: [600, 200, 600, 200, 600, 200, 800],
+            data: { id: item.id },
+          } as any);
+          return;
+        }
+      } catch (swErr) {
+        console.warn('Service worker showNotification notice:', swErr);
+      }
+    }
+
+    // 2. Desktop & iOS Safari fallback
+    try {
+      const notif = new Notification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: item.id,
+        requireInteraction: true,
+      } as any);
+      notif.onclick = () => {
+        window.focus();
+      };
+    } catch (e) {
+      console.warn('Fallback Notification constructor failed:', e);
+    }
+  };
+
   // Real-time tick to check reminders due
   useEffect(() => {
     const interval = setInterval(() => {
@@ -191,35 +241,43 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const diff = nowMs - triggerTime;
         const triggerKey = `${item.id}_${item.data_hora_execucao}`;
 
-        if (diff >= 0 && diff < 90000 && !triggeredIdsRef.current.has(triggerKey)) {
+        // 5-minute window to tolerate background tab throttling
+        if (diff >= 0 && diff < 300000 && !triggeredIdsRef.current.has(triggerKey)) {
           triggeredIdsRef.current.add(triggerKey);
 
-          soundAlert.playAlarm();
+          soundAlert.startRingingAlarm();
           setActiveAlarmReminder(item);
-
-          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-            try {
-              new Notification(`⏰ Lembrete: ${item.titulo}`, {
-                body:
-                  item.antecedencia_minutos > 0
-                    ? `Compromisso agendado com antecedência de ${item.antecedencia_minutos} min!`
-                    : `Horário do compromisso alcançado!`,
-                icon: '/icon-192.png',
-                badge: '/icon-192.png',
-                tag: item.id,
-              });
-            } catch (err) {
-              console.warn('Push notification failed:', err);
-            }
-          }
+          triggerPushNotification(item);
         }
       });
-    }, 3000);
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [reminders]);
 
+  // Tab Title Flashing alert when alarm is ringing in background tab
+  useEffect(() => {
+    if (!activeAlarmReminder) {
+      document.title = 'Lembrete Inteligente';
+      return;
+    }
+
+    let toggle = false;
+    const titleInterval = setInterval(() => {
+      toggle = !toggle;
+      document.title = toggle
+        ? `🚨 [ALARME] ${activeAlarmReminder.titulo}`
+        : `⏰ Horário de: ${activeAlarmReminder.titulo}`;
+    }, 900);
+
+    return () => {
+      clearInterval(titleInterval);
+      document.title = 'Lembrete Inteligente';
+    };
+  }, [activeAlarmReminder]);
+
   const dismissAlarm = () => {
+    soundAlert.stopRingingAlarm();
     setActiveAlarmReminder(null);
   };
 
@@ -247,6 +305,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Snooze by N minutes (default: 10 minutes)
   const snoozeReminder = async (id: string, minutes = 10) => {
+    soundAlert.stopRingingAlarm();
     if (!currentUser?.id) return;
 
     // Calculate new execution time
@@ -291,6 +350,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateStatus = async (id: string, status: StatusTarefa) => {
+    soundAlert.stopRingingAlarm();
     if (!currentUser?.id) return;
 
     const existing = reminders.find((r) => r.id === id);

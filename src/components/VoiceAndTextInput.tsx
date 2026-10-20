@@ -9,9 +9,12 @@ import {
   CheckCircle2,
   Sliders,
   Sparkles,
+  Volume2,
+  RefreshCw,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { cleanSpokenTranscript } from '../utils/reminderParser';
+import { soundAlert } from '../utils/audioAlert';
 
 interface VoiceAndTextInputProps {
   onOpenManualModal: () => void;
@@ -25,37 +28,53 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [speechTranscript, setSpeechTranscript] = useState('');
+  const [autoScheduleCountdown, setAutoScheduleCountdown] = useState<number | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'sucesso' | 'erro'; text: string } | null>(null);
 
   const recognitionRef = useRef<any>(null);
   const timerIntervalRef = useRef<any>(null);
+  const countdownIntervalRef = useRef<any>(null);
   const latestTranscriptRef = useRef<string>('');
   const accumulatedFinalRef = useRef<string>('');
   const silenceTimeoutRef = useRef<any>(null);
   const isAutoSchedulingRef = useRef<boolean>(false);
+  const shouldKeepListeningRef = useRef<boolean>(false);
+
+  // Clear countdown intervals
+  const clearCountdown = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
+    setAutoScheduleCountdown(null);
+  }, []);
 
   // Auto-schedule directly from spoken text with zero clicks required
   const autoScheduleVoice = useCallback(
     async (textToSchedule: string) => {
       const clean = cleanSpokenTranscript(textToSchedule || latestTranscriptRef.current || inputText);
-      // Require at least 2 alphanumeric characters so stray breathing/noise doesn't trigger
-      if (!clean || !/[a-zA-Z0-9]/.test(clean) || isAutoSchedulingRef.current) {
+      // Require at least 3 alphanumeric characters to avoid breath/click triggers
+      if (!clean || clean.length < 3 || !/[a-zA-Z0-9]/.test(clean) || isAutoSchedulingRef.current) {
         setIsRecording(false);
+        clearCountdown();
         return;
       }
 
       isAutoSchedulingRef.current = true;
+      shouldKeepListeningRef.current = false;
+      clearCountdown();
 
-      // Safely stop voice capture
+      // Stop speech recognition
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
         } catch {}
       }
       setIsRecording(false);
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-      }
 
       try {
         const result = await processAiCommand({
@@ -67,26 +86,49 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         setSpeechTranscript('');
         latestTranscriptRef.current = '';
         accumulatedFinalRef.current = '';
+        soundAlert.playSuccess();
         setFeedbackMessage({
           type: 'sucesso',
-          text: result.mensagem_sistema || 'Lembrete agendado automaticamente com sucesso!',
+          text: result.mensagem_sistema || 'Lembrete agendado automaticamente com precisão!',
         });
         setTimeout(() => setFeedbackMessage(null), 6000);
       } catch (err: any) {
         console.error('Error auto-scheduling reminder:', err);
         setFeedbackMessage({
           type: 'erro',
-          text: err?.message || 'Não foi possível agendar o lembrete por voz. Tente novamente ou digite o texto.',
+          text: err?.message || 'Não foi possível agendar o lembrete. Tente novamente ou ajuste o texto.',
         });
       } finally {
         isAutoSchedulingRef.current = false;
         setIsRecording(false);
       }
     },
-    [processAiCommand, selectedAntecedencia, inputText]
+    [processAiCommand, selectedAntecedencia, inputText, clearCountdown]
   );
 
-  // Initialize native Browser Web Speech Recognition with anti-repetition guards
+  // Start visual 3-second countdown before automatically confirming
+  const startSilenceCountdown = useCallback(
+    (transcriptCandidate: string) => {
+      clearCountdown();
+      let remaining = 3;
+      setAutoScheduleCountdown(remaining);
+
+      countdownIntervalRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearCountdown();
+          if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
+            autoScheduleVoice(latestTranscriptRef.current);
+          }
+        } else {
+          setAutoScheduleCountdown(remaining);
+        }
+      }, 1000);
+    },
+    [autoScheduleVoice, clearCountdown]
+  );
+
+  // Initialize native Browser Web Speech Recognition
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition =
@@ -94,29 +136,29 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
-        // Use continuous = false to prevent mobile Chromium duplicate streaming bug
-        recognition.continuous = false;
+        // Use continuous = true so speech isn't chopped off mid-phrase
+        recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = 'pt-BR';
+        recognition.maxAlternatives = 3;
 
         recognition.onresult = (event: any) => {
-          let finalChunk = '';
+          let currentFinal = '';
           let interimChunk = '';
 
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const res = event.results[i];
             const text = res[0]?.transcript || '';
             if (res.isFinal) {
-              finalChunk += (finalChunk ? ' ' : '') + text;
+              currentFinal += (currentFinal ? ' ' : '') + text;
             } else {
               interimChunk += (interimChunk ? ' ' : '') + text;
             }
           }
 
-          if (finalChunk) {
-            accumulatedFinalRef.current = cleanSpokenTranscript(
-              (accumulatedFinalRef.current ? accumulatedFinalRef.current + ' ' : '') + finalChunk
-            );
+          if (currentFinal) {
+            const merged = (accumulatedFinalRef.current ? accumulatedFinalRef.current + ' ' : '') + currentFinal;
+            accumulatedFinalRef.current = cleanSpokenTranscript(merged);
           }
 
           const combined = (accumulatedFinalRef.current + ' ' + interimChunk).trim();
@@ -127,54 +169,45 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
             setSpeechTranscript(clean);
             setInputText(clean);
 
-            // Auto-schedule trigger on natural silence after speaker finishes their sentence
-            if (silenceTimeoutRef.current) {
-              clearTimeout(silenceTimeoutRef.current);
-            }
-            silenceTimeoutRef.current = setTimeout(() => {
-              if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
-                autoScheduleVoice(latestTranscriptRef.current);
-              }
-            }, 1200);
+            // Natural silence countdown: gives user 3 seconds of calm pause to finish phrase
+            startSilenceCountdown(clean);
           }
-        };
-
-        recognition.onspeechend = () => {
-          // When speech ends, give a brief moment for final chunk then schedule automatically
-          if (silenceTimeoutRef.current) {
-            clearTimeout(silenceTimeoutRef.current);
-          }
-          silenceTimeoutRef.current = setTimeout(() => {
-            const candidate = latestTranscriptRef.current || accumulatedFinalRef.current;
-            if (candidate && !isAutoSchedulingRef.current) {
-              autoScheduleVoice(candidate);
-            }
-          }, 800);
         };
 
         recognition.onerror = (event: any) => {
-          // Ignore normal non-speech or aborted events (e.g. user stopped manually or silence before speech)
-          if (event.error === 'no-speech' || event.error === 'aborted') {
+          if (event.error === 'no-speech') {
+            // User paused or didn't speak yet; do not crash, keep waiting if recording
+            return;
+          }
+          if (event.error === 'aborted') {
             setIsRecording(false);
             return;
           }
 
           console.warn('Erro no reconhecimento de voz:', event.error);
           setIsRecording(false);
+          shouldKeepListeningRef.current = false;
+          clearCountdown();
+
           if (event.error === 'not-allowed') {
             setFeedbackMessage({
               type: 'erro',
-              text: 'Permissão de microfone negada. Conceda permissão nas configurações do navegador ou digite o texto.',
+              text: 'Permissão de microfone negada. Conceda permissão no navegador ou digite o texto.',
             });
           }
         };
 
         recognition.onend = () => {
-          setIsRecording(false);
-          const pendingText = cleanSpokenTranscript(latestTranscriptRef.current || accumulatedFinalRef.current);
-          if (pendingText && !isAutoSchedulingRef.current) {
-            autoScheduleVoice(pendingText);
+          // If mobile browser closed recognition prematurely while user still wants to record
+          if (shouldKeepListeningRef.current && !isAutoSchedulingRef.current) {
+            try {
+              recognition.start();
+              return;
+            } catch {}
           }
+
+          setIsRecording(false);
+          clearCountdown();
         };
 
         recognitionRef.current = recognition;
@@ -182,11 +215,9 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     }
 
     return () => {
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-      }
+      clearCountdown();
     };
-  }, [autoScheduleVoice]);
+  }, [clearCountdown, startSilenceCountdown]);
 
   // Timer for recording duration
   useEffect(() => {
@@ -210,16 +241,19 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     latestTranscriptRef.current = '';
     accumulatedFinalRef.current = '';
     isAutoSchedulingRef.current = false;
+    clearCountdown();
 
     if (!recognitionRef.current) {
       setFeedbackMessage({
         type: 'erro',
-        text: 'Seu navegador não suporta a Web Speech API. Digite o lembrete no campo de texto.',
+        text: 'Seu navegador não suporta a Web Speech API. Digite o lembrete no campo abaixo.',
       });
       return;
     }
 
     try {
+      soundAlert.playChime();
+      shouldKeepListeningRef.current = true;
       recognitionRef.current.start();
       setIsRecording(true);
     } catch (e) {
@@ -228,22 +262,31 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     }
   };
 
-  const stopVoiceCapture = () => {
+  const stopVoiceCaptureAndSchedule = () => {
+    shouldKeepListeningRef.current = false;
     setIsRecording(false);
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-    }
+    clearCountdown();
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-      } catch (e) {
-        console.warn('Erro ao parar reconhecimento:', e);
-      }
+      } catch {}
     }
-    // If user explicitly taps to stop, auto-schedule whatever was captured
-    const textToSchedule = cleanSpokenTranscript(latestTranscriptRef.current || accumulatedFinalRef.current);
+
+    const textToSchedule = cleanSpokenTranscript(latestTranscriptRef.current || accumulatedFinalRef.current || inputText);
     if (textToSchedule && !isAutoSchedulingRef.current) {
       autoScheduleVoice(textToSchedule);
+    }
+  };
+
+  const cancelVoiceCapture = () => {
+    shouldKeepListeningRef.current = false;
+    setIsRecording(false);
+    clearCountdown();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
     }
   };
 
@@ -253,7 +296,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     if (!textToSubmit) return;
 
     if (isRecording) {
-      stopVoiceCapture();
+      stopVoiceCaptureAndSchedule();
       return;
     }
 
@@ -267,9 +310,10 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       setSpeechTranscript('');
       latestTranscriptRef.current = '';
       accumulatedFinalRef.current = '';
+      soundAlert.playSuccess();
       setFeedbackMessage({
         type: 'sucesso',
-        text: result.mensagem_sistema || 'Lembrete agendado e salvo com sucesso no Firebase!',
+        text: result.mensagem_sistema || 'Lembrete agendado e salvo com sucesso!',
       });
       setTimeout(() => setFeedbackMessage(null), 6000);
     } catch (err: any) {
@@ -281,7 +325,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   };
 
   return (
-    <section className="bg-slate-900/60 rounded-3xl p-4 sm:p-5 border border-slate-800 shadow-xl backdrop-blur-sm">
+    <section className="bg-slate-900/70 rounded-3xl p-4 sm:p-5 border border-slate-800 shadow-xl backdrop-blur-md">
       {/* Header Info */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -294,7 +338,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
             </h2>
             <p className="text-[11px] text-slate-400 flex items-center gap-1">
               <Sparkles className="w-3 h-3 text-amber-400" />
-              <span>Agendamento automático ao falar &bull; Sem necessidade de clicar</span>
+              <span>Reconhecimento nítido &bull; Fale naturalmente</span>
             </p>
           </div>
         </div>
@@ -315,8 +359,11 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
           <textarea
             rows={2}
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder='Fale no microfone para agendar direto, ou digite: "Lembrar amanhã às 14h de pagar o boleto"...'
+            onChange={(e) => {
+              setInputText(e.target.value);
+              latestTranscriptRef.current = e.target.value;
+            }}
+            placeholder='Fale no microfone ou digite: "Lembrar amanhã às 14h de pagar o boleto"...'
             disabled={isProcessingAi}
             className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-400 focus:outline-none resize-none disabled:opacity-50"
             onKeyDown={(e) => {
@@ -359,17 +406,17 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
             {/* Actions: Mic & Submit */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* Voice button (Native Web Speech API with Auto-Schedule) */}
+              {/* Voice button */}
               <button
                 type="button"
-                onClick={isRecording ? stopVoiceCapture : startVoiceCapture}
+                onClick={isRecording ? stopVoiceCaptureAndSchedule : startVoiceCapture}
                 disabled={isProcessingAi}
                 className={`relative p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
                   isRecording
-                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40 scale-105 animate-pulse'
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/50 scale-105 animate-pulse'
                     : 'bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-900 active:scale-95'
                 }`}
-                title={isRecording ? 'Parar e agendar' : 'Falar comando (agenda automaticamente)'}
+                title={isRecording ? 'Parar e agendar' : 'Falar comando no microfone'}
               >
                 {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 {isRecording && (
@@ -403,32 +450,55 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         </div>
       </form>
 
-      {/* Recording in progress overlay bar */}
+      {/* Recording in progress overlay bar with live waveform and countdown */}
       {isRecording && (
-        <div className="mt-2.5 p-3 rounded-2xl bg-rose-950/40 border border-rose-500/40 flex items-center justify-between text-xs text-rose-200 animate-in fade-in">
-          <div className="flex items-center gap-2">
-            <span className="flex h-3 w-3 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
-            </span>
-            <span className="font-semibold">Ouvindo... ({recordingSeconds}s)</span>
-            <span className="text-[11px] text-rose-300/80 truncate max-w-[200px]">
-              {speechTranscript || 'Fale seu lembrete agora...'}
-            </span>
+        <div className="mt-3 p-3.5 rounded-2xl bg-slate-800/90 border border-rose-500/50 text-xs text-rose-200 animate-in fade-in space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="flex h-3 w-3 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+              </span>
+              <span className="font-bold text-white">Microfone Ativo ({recordingSeconds}s)</span>
+              {autoScheduleCountdown !== null && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold animate-pulse text-[11px]">
+                  Agendando em {autoScheduleCountdown}s...
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cancelVoiceCapture}
+                className="text-[11px] text-slate-400 hover:text-white px-2 py-1 rounded-lg hover:bg-slate-700/60 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={stopVoiceCaptureAndSchedule}
+                className="px-3 py-1 rounded-xl bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-bold text-[11px] shadow-md shadow-rose-600/30 transition cursor-pointer active:scale-95"
+              >
+                Confirmar Agora
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => autoScheduleVoice(speechTranscript || latestTranscriptRef.current)}
-            className="px-3 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] shadow hover:bg-rose-500 transition cursor-pointer"
-          >
-            Agendar Agora
-          </button>
+
+          {/* Live recognized text preview */}
+          <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700/60">
+            <p className="text-[11px] text-slate-400 mb-0.5">Texto capturado em tempo real:</p>
+            <p className="text-xs text-slate-100 font-medium break-words italic">
+              {speechTranscript ? `"${speechTranscript}"` : 'Fale claramente seu lembrete agora...'}
+            </p>
+          </div>
         </div>
       )}
 
       {/* Confirmation / Error feedback banner */}
       {feedbackMessage && (
         <div
-          className={`mt-2.5 p-3 rounded-2xl flex items-start gap-2.5 text-xs animate-in fade-in slide-in-from-top-1 ${
+          className={`mt-3 p-3.5 rounded-2xl flex items-start gap-2.5 text-xs animate-in fade-in slide-in-from-top-1 ${
             feedbackMessage.type === 'sucesso'
               ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-200'
               : 'bg-rose-950/60 border border-rose-500/40 text-rose-200'
@@ -440,8 +510,8 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
           )}
           <div className="flex-1">
-            <p className="font-semibold">
-              {feedbackMessage.type === 'sucesso' ? 'Lembrete Confirmado' : 'Aviso do Sistema'}
+            <p className="font-semibold text-white">
+              {feedbackMessage.type === 'sucesso' ? 'Lembrete Confirmado!' : 'Aviso do Sistema'}
             </p>
             <p className="text-[11px] mt-0.5 text-slate-300">{feedbackMessage.text}</p>
           </div>

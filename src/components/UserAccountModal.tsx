@@ -1,6 +1,7 @@
 import React from 'react';
-import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2 } from 'lucide-react';
+import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell } from 'lucide-react';
 import { useUser } from '../context/UserContext';
+import { useReminders } from '../context/RemindersContext';
 
 interface UserAccountModalProps {
   onClose: () => void;
@@ -8,6 +9,7 @@ interface UserAccountModalProps {
 
 export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
+  const { testSound, notificationPermission, requestNotificationPermission } = useReminders();
 
   if (!currentUser) return null;
 
@@ -27,7 +29,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-full text-slate-400 hover:text-white transition"
+            className="p-1 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -64,6 +66,41 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
           </div>
         </div>
 
+        {/* Alert & Sound settings */}
+        <div className="mt-4 p-3 rounded-2xl bg-slate-800/70 border border-slate-700/70 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Volume2 className="w-4 h-4 text-amber-400" />
+              Alarme Alto:
+            </span>
+            <button
+              onClick={testSound}
+              className="px-2.5 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-[11px] transition cursor-pointer"
+            >
+              Testar Som Agora
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-700/50">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Bell className="w-4 h-4 text-emerald-400" />
+              Alertas Celular:
+            </span>
+            {notificationPermission === 'granted' ? (
+              <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Ativado
+              </span>
+            ) : (
+              <button
+                onClick={requestNotificationPermission}
+                className="px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-[11px] transition cursor-pointer"
+              >
+                Permitir Alertas
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Firebase Project Info */}
         <div className="mt-4 p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/30 text-xs space-y-1.5">
           <div className="flex items-center justify-between">
@@ -81,9 +118,6 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
               {currentUser.id}
             </span>
           </div>
-          <p className="text-[10px] text-slate-400 pt-1 border-t border-amber-500/20">
-            Seus lembretes são sincronizados e estritamente isolados sob sua chave UID.
-          </p>
         </div>
 
         {/* Actions */}

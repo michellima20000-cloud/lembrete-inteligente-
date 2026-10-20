@@ -25,6 +25,7 @@ export const LoginScreen: React.FC = () => {
     resetPassword,
     authError,
     clearAuthError,
+    recentEmails,
   } = useUser();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -35,12 +36,31 @@ export const LoginScreen: React.FC = () => {
       return '';
     }
   });
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(() => {
+    try {
+      return localStorage.getItem('lembrete_saved_pass') || '';
+    } catch {
+      return '';
+    }
+  });
   const [nome, setNome] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [resetSentMessage, setResetSentMessage] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+
+  const handleQuickRegister = async () => {
+    if (!email.trim() || !password.trim()) return;
+    setIsSubmitting(true);
+    clearAuthError();
+    try {
+      await signUpWithEmail(email, password, nome || email.split('@')[0]);
+    } catch {
+      // Error handled in UserContext
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,6 +188,17 @@ export const LoginScreen: React.FC = () => {
               <div className="flex-1">
                 <p className="font-semibold leading-relaxed">{authError}</p>
                 <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={handleQuickRegister}
+                      disabled={isSubmitting || password.length < 6}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-500/50 text-emerald-200 font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Cadastrar com este e-mail agora</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleForgotPassword}
@@ -175,7 +206,7 @@ export const LoginScreen: React.FC = () => {
                     className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                    <span>{isResetting ? 'Enviando e-mail...' : 'Redefinir senha por e-mail'}</span>
+                    <span>{isResetting ? 'Enviando...' : 'Redefinir senha'}</span>
                   </button>
                   {authError.includes('já existe') && (
                     <button
@@ -194,6 +225,34 @@ export const LoginScreen: React.FC = () => {
                     Fechar
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recent Accounts Quick Select Chips */}
+          {recentEmails.length > 0 && (
+            <div className="mb-3.5 p-2.5 rounded-2xl bg-slate-800/70 border border-slate-700/60 text-left">
+              <span className="text-[10px] font-bold text-slate-400 block mb-1.5">
+                Contas conhecidas neste dispositivo:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {recentEmails.map((em) => (
+                  <button
+                    key={em}
+                    type="button"
+                    onClick={() => {
+                      setEmail(em);
+                      clearAuthError();
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition cursor-pointer border ${
+                      email.toLowerCase() === em.toLowerCase()
+                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold'
+                        : 'bg-slate-700/50 hover:bg-slate-700 border-slate-600 text-slate-300'
+                    }`}
+                  >
+                    {em}
+                  </button>
+                ))}
               </div>
             </div>
           )}
