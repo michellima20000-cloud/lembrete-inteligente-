@@ -60,7 +60,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
 
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            Autenticado com Google
+            {firebaseUser ? 'Autenticado com Google' : 'Modo Convidado / Demonstração'}
           </div>
         </div>
 
@@ -82,7 +82,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
             </span>
           </div>
           <p className="text-[10px] text-slate-400 pt-1 border-t border-amber-500/20">
-            Seus lembretes são sincronizados no Firestore sob sua chave UID estritamente isolada.
+            Seus lembretes são sincronizados e estritamente isolados sob sua chave UID.
           </p>
         </div>
 
@@ -93,10 +93,10 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
               signOutFirebase();
               onClose();
             }}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/40 text-rose-300 font-bold text-xs transition"
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-rose-950/40 hover:bg-rose-950/70 border border-rose-500/40 text-rose-300 font-bold text-xs transition cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
-            Sair da Conta Google
+            {firebaseUser ? 'Sair da Conta Google' : 'Sair da Conta'}
           </button>
         </div>
       </div>

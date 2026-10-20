@@ -4,7 +4,7 @@ import { useUser } from '../context/UserContext';
 import { PWAInstallButton } from './PWAInstallButton';
 
 export const LoginScreen: React.FC = () => {
-  const { signInWithGoogle, authError, clearAuthError } = useUser();
+  const { signInWithGoogle, signInAsGuest, authError, clearAuthError } = useUser();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6">
@@ -79,11 +79,11 @@ export const LoginScreen: React.FC = () => {
             </div>
           )}
 
-          {/* Google Sign-In Button */}
-          <div className="mt-6">
+          {/* Login Buttons */}
+          <div className="mt-6 space-y-2.5">
             <button
               onClick={signInWithGoogle}
-              className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-sm shadow-xl shadow-white/10 active:scale-[0.98] transition"
+              className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-sm shadow-xl shadow-white/10 active:scale-[0.98] transition cursor-pointer"
             >
               <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                 <path
@@ -104,6 +104,13 @@ export const LoginScreen: React.FC = () => {
                 />
               </svg>
               <span>Continuar com o Google</span>
+            </button>
+
+            <button
+              onClick={signInAsGuest}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-200 font-semibold text-xs transition active:scale-[0.98] cursor-pointer"
+            >
+              <span>Entrar como Convidado (Modo Demonstração)</span>
             </button>
           </div>
 
