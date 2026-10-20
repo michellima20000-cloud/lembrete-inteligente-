@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
-import { auth } from '../lib/firebase';
+import { auth, googleProvider } from '../lib/firebase';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -8,6 +8,8 @@ import {
   updateProfile,
   signInAnonymously,
   signOut as fbSignOut,
+  signInWithPopup,
+  sendPasswordResetEmail,
   User as FirebaseUser,
 } from 'firebase/auth';
 
@@ -18,6 +20,8 @@ interface UserContextType {
   isAuthReady: boolean;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name?: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   signInAsGuest: () => Promise<void>;
   signOutFirebase: () => Promise<void>;
   authError: string | null;
@@ -90,11 +94,33 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithEmail = async (email: string, pass: string) => {
     setAuthError(null);
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = pass.trim();
+
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), pass);
+      await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      try {
+        localStorage.setItem('lembrete_saved_email', cleanEmail);
+      } catch {}
+      return;
     } catch (err: any) {
+      // If trimmed failed and raw pass is different, try with raw pass
+      if (cleanPass !== pass) {
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, pass);
+          try {
+            localStorage.setItem('lembrete_saved_email', cleanEmail);
+          } catch {}
+          return;
+        } catch {}
+      }
+
       console.warn('Firebase email sign-in failed:', err);
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+      if (
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/user-not-found'
+      ) {
         setAuthError('E-mail ou senha incorretos na conta Firebase.');
       } else if (err.code === 'auth/invalid-email') {
         setAuthError('O formato do e-mail informado é inválido.');
@@ -109,8 +135,13 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUpWithEmail = async (email: string, pass: string, name?: string) => {
     setAuthError(null);
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = pass.trim();
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      try {
+        localStorage.setItem('lembrete_saved_email', cleanEmail);
+      } catch {}
       if (name && name.trim()) {
         try {
           await updateProfile(cred.user, { displayName: name.trim() });
@@ -121,13 +152,70 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       console.warn('Firebase email sign-up failed:', err);
       if (err.code === 'auth/email-already-in-use') {
-        setAuthError('Este e-mail já está cadastrado no Firebase. Utilize a opção "Entrar".');
+        // Smart auto-login fallback:
+        // If account already exists in Firebase, try logging in immediately with both clean and raw password!
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+          try {
+            localStorage.setItem('lembrete_saved_email', cleanEmail);
+          } catch {}
+          return;
+        } catch (loginErr: any) {
+          if (cleanPass !== pass) {
+            try {
+              await signInWithEmailAndPassword(auth, cleanEmail, pass);
+              try {
+                localStorage.setItem('lembrete_saved_email', cleanEmail);
+              } catch {}
+              return;
+            } catch {}
+          }
+          console.warn('Auto sign-in for existing account failed:', loginErr);
+          setAuthError('Esta conta já existe no Firebase, mas a senha digitada está incorreta para ela. Utilize a opção "Entrar" ou recupere sua senha.');
+          throw loginErr;
+        }
       } else if (err.code === 'auth/weak-password') {
         setAuthError('A senha deve ter pelo menos 6 caracteres.');
       } else if (err.code === 'auth/invalid-email') {
         setAuthError('O formato do e-mail informado é inválido.');
       } else {
         setAuthError(err.message || 'Falha ao criar conta no Firebase.');
+      }
+      throw err;
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    setAuthError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      console.warn('Google sign-in failed:', err);
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      setAuthError(err.message || 'Falha ao autenticar com o Google.');
+      throw err;
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    setAuthError(null);
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setAuthError('Informe seu e-mail no campo acima para receber as instruções de recuperação.');
+      throw new Error('E-mail necessário');
+    }
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+    } catch (err: any) {
+      console.warn('Password reset error:', err);
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+        setAuthError('E-mail não encontrado no Firebase. Verifique a digitação ou crie uma conta.');
+      } else if (err.code === 'auth/invalid-email') {
+        setAuthError('Formato de e-mail inválido.');
+      } else {
+        setAuthError(err.message || 'Falha ao enviar e-mail de redefinição de senha.');
       }
       throw err;
     }
@@ -183,6 +271,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthReady,
         signInWithEmail,
         signUpWithEmail,
+        signInWithGoogle,
+        resetPassword,
         signInAsGuest,
         signOutFirebase,
         authError,

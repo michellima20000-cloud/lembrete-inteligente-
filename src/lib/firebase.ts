@@ -1,12 +1,28 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  signInAnonymously,
+  setPersistence,
+  browserLocalPersistence,
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('Firebase persistence warning:', err);
+  });
+}
+
 export const googleProvider = new GoogleAuthProvider();
 
 // Optional Analytics
