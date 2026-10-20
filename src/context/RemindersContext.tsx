@@ -4,6 +4,7 @@ import { useUser } from './UserContext';
 import { soundAlert } from '../utils/audioAlert';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { parseReminderCommand } from '../utils/reminderParser';
 
 interface RemindersContextType {
   reminders: Lembrete[];
@@ -375,40 +376,66 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     audioMimeType?: string;
     antecedenciaPadrao?: number;
   }): Promise<AiParseResponse> => {
-    if (!currentUser?.id) {
-      throw new Error('Usuário não autenticado.');
-    }
-
+    const effectiveUserId = currentUser?.id || auth.currentUser?.uid || 'user_local';
     setIsProcessingAi(true);
 
     try {
       const now = new Date();
-      const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const localIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-      const res = await fetch('/api/lembrete/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          texto: params.texto,
-          currentLocalTime: localIso,
-          fusoHorario: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      let data: AiParseResponse;
+
+      try {
+        const res = await fetch('/api/lembrete/parse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: effectiveUserId,
+            texto: params.texto,
+            currentLocalTime: localIso,
+            fusoHorario: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            antecedencia_padrao: params.antecedenciaPadrao || 0,
+          }),
+        });
+
+        if (res.ok) {
+          data = await res.json();
+          if (data.status === 'erro' || !data.lembrete) {
+            throw new Error(data.mensagem_sistema || 'Fallback parsing');
+          }
+        } else {
+          throw new Error('Fallback parsing');
+        }
+      } catch (networkErr) {
+        // ROBUST MOBILE RESILIENCE:
+        // Execute client-side deterministic parser if network is slow, offline, or returns error
+        console.warn('Network issue or offline, executing local client parser fallback:', networkErr);
+        const parsed = parseReminderCommand({
+          texto: params.texto || '',
+          referenceTime: localIso,
+          user_id: effectiveUserId,
           antecedencia_padrao: params.antecedenciaPadrao || 0,
-        }),
-      });
+        });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.mensagem || 'Falha ao processar comando de lembrete.');
+        const newId = 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+        data = {
+          status: 'sucesso',
+          user_id: effectiveUserId,
+          lembrete: {
+            id: newId,
+            ...parsed.lembrete,
+          },
+          mensagem_sistema: parsed.mensagem_sistema,
+        };
       }
 
-      const data: AiParseResponse = await res.json();
       setLastAiResponse(data);
       soundAlert.playChime();
 
-      // If reminder was generated, sync to Firestore
+      // If reminder was generated, sync to Firestore and local partition
       if (data.lembrete && data.lembrete.id) {
-        syncItemToFirestore({
+        const fullItem: Lembrete = {
           id: data.lembrete.id,
           user_id: currentUser.id,
           titulo: data.lembrete.titulo,
@@ -419,10 +446,20 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           urgencia: data.lembrete.urgencia,
           criado_em: new Date().toISOString(),
           adiado_vezes: 0,
+        };
+
+        syncItemToFirestore(fullItem);
+
+        // Update local state immediately so UI responds with 0ms delay
+        setReminders((prev) => {
+          const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
+          updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
+          saveLocalPartition(currentUser.id, updated);
+          return updated;
         });
       }
 
-      await fetchReminders();
+      await fetchReminders().catch(() => {});
       return data;
     } finally {
       setIsProcessingAi(false);

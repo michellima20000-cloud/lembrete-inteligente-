@@ -204,6 +204,28 @@ app.delete('/api/reminders/:id', (req: Request, res: Response) => {
   });
 });
 
+// Helper to clean spoken transcripts
+function cleanSpokenTranscript(raw: string): string {
+  if (!raw) return '';
+  let text = raw.trim();
+  text = text.replace(/([a-zA-Z\u00C0-\u017F0-9_]+)(?:\s+\1)+(?=[^\w\u00C0-\u017F]|$)/gi, '$1');
+  const words = text.split(/\s+/);
+  if (words.length >= 4) {
+    for (let len = Math.floor(words.length / 2); len >= 2; len--) {
+      for (let i = 0; i <= words.length - len * 2; i++) {
+        const chunk1 = words.slice(i, i + len).join(' ').toLowerCase();
+        const chunk2 = words.slice(i + len, i + len * 2).join(' ').toLowerCase();
+        if (chunk1 === chunk2) {
+          words.splice(i + len, len);
+          i--;
+        }
+      }
+    }
+    text = words.join(' ');
+  }
+  return text.trim();
+}
+
 // 100% Local & Deterministic Natural Language Regex Parser (Zero external APIs)
 function parseReminderCommandLocal(params: {
   texto: string;
@@ -211,10 +233,34 @@ function parseReminderCommandLocal(params: {
   user_id: string;
   antecedencia_padrao?: number;
 }) {
-  const rawText = params.texto.trim();
+  const cleanInput = cleanSpokenTranscript(params.texto);
+  const rawText = cleanInput.trim();
   const text = rawText.toLowerCase();
-  const ref = new Date(params.referenceTime);
-  let target = new Date(ref.getTime());
+
+  // Parse reference time without timezone skew
+  let refYear: number, refMonth: number, refDay: number, refHour: number, refMinute: number, refSec: number;
+  if (params.referenceTime && params.referenceTime.includes('T')) {
+    const [dPart, tPart] = params.referenceTime.split('T');
+    const [y, m, d] = dPart.split('-').map(Number);
+    const [h, min, s] = (tPart || '00:00:00').split(':').map(Number);
+    refYear = y;
+    refMonth = m - 1;
+    refDay = d;
+    refHour = h || 0;
+    refMinute = min || 0;
+    refSec = s || 0;
+  } else {
+    const d = new Date();
+    refYear = d.getFullYear();
+    refMonth = d.getMonth();
+    refDay = d.getDate();
+    refHour = d.getHours();
+    refMinute = d.getMinutes();
+    refSec = d.getSeconds();
+  }
+
+  const ref = new Date(refYear, refMonth, refDay, refHour, refMinute, refSec);
+  let target = new Date(refYear, refMonth, refDay, refHour, refMinute, refSec);
 
   // 1. Antecedência
   let antecedencia = params.antecedencia_padrao || 0;
@@ -229,6 +275,11 @@ function parseReminderCommandLocal(params: {
   const hourMatch = text.match(/(?:daqui\s*a|em)\s*(\d+)\s*(?:horas?|h)\b/i);
   const halfHourMatch = text.match(/(?:daqui\s*a|em)\s*meia\s*hora\b/i);
 
+  // Unicode-safe temporal indicators
+  const isAfterTomorrow = /(?:^|[^\w\u00C0-\u017F])depois\s+de\s+amanh[ãa](?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isTomorrow = !isAfterTomorrow && /(?:^|[^\w\u00C0-\u017F])amanh[ãa](?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isToday = /(?:^|[^\w\u00C0-\u017F])hoje(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+
   if (minMatch) {
     target = new Date(target.getTime() + parseInt(minMatch[1], 10) * 60000);
   } else if (halfHourMatch) {
@@ -237,13 +288,12 @@ function parseReminderCommandLocal(params: {
     target = new Date(target.getTime() + parseInt(hourMatch[1], 10) * 3600000);
   } else {
     // 3. Day of execution
-    const isTomorrow = text.includes('amanhã') || text.includes('amanha');
-    const isAfterTomorrow = text.includes('depois de amanhã') || text.includes('depois de amanha');
-
     if (isAfterTomorrow) {
       target.setDate(target.getDate() + 2);
     } else if (isTomorrow) {
       target.setDate(target.getDate() + 1);
+    } else if (isToday) {
+      // User explicitly specified "hoje" - must remain today!
     } else {
       // Check weekday names (segunda, terça, quarta, quinta, sexta, sábado, domingo)
       const weekDays: Record<string, number> = {
@@ -265,7 +315,7 @@ function parseReminderCommandLocal(params: {
       };
 
       for (const [dayName, dayIndex] of Object.entries(weekDays)) {
-        const regex = new RegExp(`\\b(?:na\\s+|no\\s+|próxim[ao]\\s+)?${dayName}\\b`, 'i');
+        const regex = new RegExp(`(?:^|[^\\w\\u00C0-\\u017F])(?:na\\s+|no\\s+|próxim[ao]\\s+)?${dayName}(?:[^\\w\\u00C0-\\u017F]|$)`, 'i');
         if (regex.test(text)) {
           const currentDay = ref.getDay();
           let daysDiff = dayIndex - currentDay;
@@ -276,11 +326,12 @@ function parseReminderCommandLocal(params: {
       }
     }
 
-    // 4. Specific Time (e.g., "às 14h", "às 14:30", "14h30", "19:00", "às 9 e meia")
+    // 4. Specific Time (e.g., "às 14h", "às 14:30", "14h30", "19:00", "às 9 e meia", "15 horas")
     const timeMatch =
-      text.match(/(?:às|as|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?\b/i) ||
-      text.match(/(\d{1,2})\s*horas?\b/i);
-    const halfPastMatch = text.match(/(?:às|as)\s*(\d{1,2})\s*e\s*meia\b/i);
+      text.match(/(?:às|as|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?(?:[^\w\u00C0-\u017F]|$)/i) ||
+      text.match(/(\d{1,2})\s*horas?(?:[^\w\u00C0-\u017F]|$)/i) ||
+      text.match(/(?:às|as|para\s*as|para\s*às)\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
+    const halfPastMatch = text.match(/(?:às|as)\s*(\d{1,2})\s*e\s*meia(?:[^\w\u00C0-\u017F]|$)/i);
 
     if (halfPastMatch) {
       const h = parseInt(halfPastMatch[1], 10);
@@ -290,8 +341,8 @@ function parseReminderCommandLocal(params: {
       const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
       target.setHours(hours, minutes, 0, 0);
 
-      // If scheduled for today without explicit "amanhã" and time has already passed, schedule for tomorrow
-      if (!isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
+      // Only bump to tomorrow if NOT explicitly "hoje", NOT "amanhã", and NOT "depois de amanhã"
+      if (!isToday && !isTomorrow && !isAfterTomorrow && target.getTime() <= ref.getTime()) {
         target.setDate(target.getDate() + 1);
       }
     } else {
@@ -304,6 +355,9 @@ function parseReminderCommandLocal(params: {
         target.setHours(20, 0, 0, 0);
       } else if (isTomorrow || isAfterTomorrow) {
         target.setHours(9, 0, 0, 0);
+      } else if (isToday) {
+        const nextHour = ref.getHours() + 1;
+        target.setHours(Math.min(nextHour, 23), 0, 0, 0);
       } else {
         // Default to 1 hour from current time
         target = new Date(target.getTime() + 60 * 60000);
@@ -321,21 +375,21 @@ function parseReminderCommandLocal(params: {
     .replace(/^criar\s+(?:um\s+)?lembrete\s*(?:de\s+|para\s+)?/i, '');
 
   cleanedTitle = cleanedTitle
-    .replace(/(?:^|\s)(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:às|as|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)\d{1,2}\s*horas?(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:às|as)\s*\d{1,2}\s*e\s*meia(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:daqui\s*a|em)\s*meia\s*hora(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=\s|$)/gi, ' ')
-    .replace(/(?:^|\s)(?:de\s+manh[ãa]|pela\s+manh[ãa]|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=\s|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])\d{1,2}\s*horas?(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as)\s*\d{1,2}\s*e\s*meia(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*meia\s*hora(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:de\s+manh[ãa]|pela\s+manh[ãa]|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   // Strip leading prepositions left behind
   cleanedTitle = cleanedTitle.replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+)/i, '').trim();
   if (!cleanedTitle) {
-    cleanedTitle = rawText;
+    cleanedTitle = rawText || 'Compromisso agendado';
   }
   cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
 
@@ -385,6 +439,9 @@ function parseReminderCommandLocal(params: {
     target.getDate()
   )}T${pad(target.getHours())}:${pad(target.getMinutes())}:${pad(target.getSeconds())}`;
 
+  const formattedHour = `${pad(target.getHours())}:${pad(target.getMinutes())}`;
+  const dayDesc = isToday ? 'hoje' : isTomorrow ? 'amanhã' : isAfterTomorrow ? 'depois de amanhã' : `${pad(target.getDate())}/${pad(target.getMonth() + 1)}`;
+
   return {
     status: 'sucesso',
     user_id: params.user_id,
@@ -396,7 +453,7 @@ function parseReminderCommandLocal(params: {
       categoria,
       urgencia,
     },
-    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado com sucesso e isolado no perfil.`,
+    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado com sucesso para ${dayDesc} às ${formattedHour}!`,
   };
 }
 

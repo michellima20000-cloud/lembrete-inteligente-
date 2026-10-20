@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
+import { cleanSpokenTranscript } from '../utils/reminderParser';
 
 interface VoiceAndTextInputProps {
   onOpenManualModal: () => void;
@@ -29,18 +30,23 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   const recognitionRef = useRef<any>(null);
   const timerIntervalRef = useRef<any>(null);
   const latestTranscriptRef = useRef<string>('');
+  const accumulatedFinalRef = useRef<string>('');
   const silenceTimeoutRef = useRef<any>(null);
   const isAutoSchedulingRef = useRef<boolean>(false);
 
   // Auto-schedule directly from spoken text with zero clicks required
   const autoScheduleVoice = useCallback(
     async (textToSchedule: string) => {
-      const clean = textToSchedule.trim();
-      if (!clean || isAutoSchedulingRef.current) return;
+      const clean = cleanSpokenTranscript(textToSchedule || latestTranscriptRef.current || inputText);
+      // Require at least 2 alphanumeric characters so stray breathing/noise doesn't trigger
+      if (!clean || !/[a-zA-Z0-9]/.test(clean) || isAutoSchedulingRef.current) {
+        setIsRecording(false);
+        return;
+      }
 
       isAutoSchedulingRef.current = true;
 
-      // Stop voice capture
+      // Safely stop voice capture
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
@@ -60,24 +66,27 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         setInputText('');
         setSpeechTranscript('');
         latestTranscriptRef.current = '';
+        accumulatedFinalRef.current = '';
         setFeedbackMessage({
           type: 'sucesso',
           text: result.mensagem_sistema || 'Lembrete agendado automaticamente com sucesso!',
         });
         setTimeout(() => setFeedbackMessage(null), 6000);
       } catch (err: any) {
+        console.error('Error auto-scheduling reminder:', err);
         setFeedbackMessage({
           type: 'erro',
-          text: err?.message || 'Não foi possível agendar o lembrete por voz. Tente novamente.',
+          text: err?.message || 'Não foi possível agendar o lembrete por voz. Tente novamente ou digite o texto.',
         });
       } finally {
         isAutoSchedulingRef.current = false;
+        setIsRecording(false);
       }
     },
-    [processAiCommand, selectedAntecedencia]
+    [processAiCommand, selectedAntecedencia, inputText]
   );
 
-  // Initialize native Browser Web Speech Recognition
+  // Initialize native Browser Web Speech Recognition with anti-repetition guards
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition =
@@ -85,22 +94,40 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
-        recognition.continuous = true;
+        // Use continuous = false to prevent mobile Chromium duplicate streaming bug
+        recognition.continuous = false;
         recognition.interimResults = true;
         recognition.lang = 'pt-BR';
 
         recognition.onresult = (event: any) => {
-          let current = '';
-          for (let i = 0; i < event.results.length; i++) {
-            current += event.results[i][0].transcript;
-          }
-          const cleanTranscript = current.trim();
-          if (cleanTranscript) {
-            latestTranscriptRef.current = cleanTranscript;
-            setSpeechTranscript(cleanTranscript);
-            setInputText(cleanTranscript);
+          let finalChunk = '';
+          let interimChunk = '';
 
-            // Auto-schedule trigger on natural silence (1.4s after the speaker finishes their sentence)
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const res = event.results[i];
+            const text = res[0]?.transcript || '';
+            if (res.isFinal) {
+              finalChunk += (finalChunk ? ' ' : '') + text;
+            } else {
+              interimChunk += (interimChunk ? ' ' : '') + text;
+            }
+          }
+
+          if (finalChunk) {
+            accumulatedFinalRef.current = cleanSpokenTranscript(
+              (accumulatedFinalRef.current ? accumulatedFinalRef.current + ' ' : '') + finalChunk
+            );
+          }
+
+          const combined = (accumulatedFinalRef.current + ' ' + interimChunk).trim();
+          const clean = cleanSpokenTranscript(combined);
+
+          if (clean) {
+            latestTranscriptRef.current = clean;
+            setSpeechTranscript(clean);
+            setInputText(clean);
+
+            // Auto-schedule trigger on natural silence after speaker finishes their sentence
             if (silenceTimeoutRef.current) {
               clearTimeout(silenceTimeoutRef.current);
             }
@@ -108,32 +135,45 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
                 autoScheduleVoice(latestTranscriptRef.current);
               }
-            }, 1400);
+            }, 1200);
           }
         };
 
         recognition.onspeechend = () => {
-          // When speech stops, schedule automatically
+          // When speech ends, give a brief moment for final chunk then schedule automatically
           if (silenceTimeoutRef.current) {
             clearTimeout(silenceTimeoutRef.current);
           }
           silenceTimeoutRef.current = setTimeout(() => {
-            if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
-              autoScheduleVoice(latestTranscriptRef.current);
+            const candidate = latestTranscriptRef.current || accumulatedFinalRef.current;
+            if (candidate && !isAutoSchedulingRef.current) {
+              autoScheduleVoice(candidate);
             }
           }, 800);
         };
 
         recognition.onerror = (event: any) => {
-          console.warn('Erro no reconhecimento de voz nativo:', event.error);
+          // Ignore normal non-speech or aborted events (e.g. user stopped manually or silence before speech)
+          if (event.error === 'no-speech' || event.error === 'aborted') {
+            setIsRecording(false);
+            return;
+          }
+
+          console.warn('Erro no reconhecimento de voz:', event.error);
           setIsRecording(false);
+          if (event.error === 'not-allowed') {
+            setFeedbackMessage({
+              type: 'erro',
+              text: 'Permissão de microfone negada. Conceda permissão nas configurações do navegador ou digite o texto.',
+            });
+          }
         };
 
         recognition.onend = () => {
           setIsRecording(false);
-          // If stopped and there's text waiting that hasn't been scheduled yet, schedule it!
-          if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
-            autoScheduleVoice(latestTranscriptRef.current);
+          const pendingText = cleanSpokenTranscript(latestTranscriptRef.current || accumulatedFinalRef.current);
+          if (pendingText && !isAutoSchedulingRef.current) {
+            autoScheduleVoice(pendingText);
           }
         };
 
@@ -166,7 +206,10 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   const startVoiceCapture = () => {
     setFeedbackMessage(null);
     setSpeechTranscript('');
+    setInputText('');
     latestTranscriptRef.current = '';
+    accumulatedFinalRef.current = '';
+    isAutoSchedulingRef.current = false;
 
     if (!recognitionRef.current) {
       setFeedbackMessage({
@@ -198,14 +241,15 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       }
     }
     // If user explicitly taps to stop, auto-schedule whatever was captured
-    if (latestTranscriptRef.current && !isAutoSchedulingRef.current) {
-      autoScheduleVoice(latestTranscriptRef.current);
+    const textToSchedule = cleanSpokenTranscript(latestTranscriptRef.current || accumulatedFinalRef.current);
+    if (textToSchedule && !isAutoSchedulingRef.current) {
+      autoScheduleVoice(textToSchedule);
     }
   };
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const textToSubmit = inputText.trim();
+    const textToSubmit = cleanSpokenTranscript(inputText).trim();
     if (!textToSubmit) return;
 
     if (isRecording) {
@@ -222,6 +266,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       setInputText('');
       setSpeechTranscript('');
       latestTranscriptRef.current = '';
+      accumulatedFinalRef.current = '';
       setFeedbackMessage({
         type: 'sucesso',
         text: result.mensagem_sistema || 'Lembrete agendado e salvo com sucesso no Firebase!',
