@@ -1,5 +1,15 @@
 // Service Worker Companion for Background Notifications & Actions
-// Handles notification click, action buttons (Concluir, Adiar), and window focus.
+// Handles notification click, action buttons (Concluir, Adiar), vibration, and background wake.
+
+self.addEventListener('install', (event) => {
+  // Activate immediately without waiting for old clients to close
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  // Claim all active clients so push notifications work right away
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
@@ -29,6 +39,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-self.addEventListener('notificationclose', (event) => {
+self.addEventListener('notificationclose', () => {
   // Notification dismissed by user
 });
+

@@ -9,7 +9,7 @@ import { soundAlert } from '../utils/audioAlert';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
-  const { soundEnabled, toggleSound, notificationPermission } = useReminders();
+  const { soundEnabled, toggleSound, notificationPermission, isIframe } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
@@ -57,19 +57,31 @@ export const Header: React.FC = () => {
               onClick={handleNotificationClick}
               className={`p-2 rounded-xl transition-all cursor-pointer relative active:scale-95 ${
                 notificationPermission === 'granted'
-                  ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/60'
+                  ? 'bg-indigo-950/60 text-emerald-300 border border-emerald-500/30 hover:bg-indigo-900/60'
+                  : isIframe
+                  ? 'bg-indigo-950/50 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/50'
                   : 'bg-slate-800 text-amber-300 border border-amber-500/30 hover:bg-slate-700 hover:text-amber-200'
               }`}
-              title="Alarmes em Segundo Plano e Notificações (Clique para testar e configurar)"
+              title={
+                notificationPermission === 'granted'
+                  ? 'Notificações e alarme em segundo plano ativos'
+                  : isIframe
+                  ? 'Alarmes em segundo plano (Clique para abrir em aba direta)'
+                  : 'Ativar notificações em segundo plano'
+              }
               aria-label="Configurar alarmes e notificações em segundo plano"
             >
               {notificationPermission === 'granted' ? (
                 <Bell className="w-4 h-4 text-emerald-400" />
+              ) : isIframe ? (
+                <Bell className="w-4 h-4 text-indigo-400" />
               ) : (
                 <BellOff className="w-4 h-4 text-amber-400" />
               )}
               {notificationPermission === 'granted' ? (
                 <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              ) : isIframe ? (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-indigo-400" />
               ) : (
                 <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               )}

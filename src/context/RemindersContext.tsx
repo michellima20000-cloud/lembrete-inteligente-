@@ -6,6 +6,7 @@ import { backgroundTimer } from '../utils/backgroundTimer';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { parseReminderCommand } from '../utils/reminderParser';
+import { isInsideIframe } from '../utils/browserEnv';
 
 interface RemindersContextType {
   reminders: Lembrete[];
@@ -33,6 +34,7 @@ interface RemindersContextType {
   requestNotificationPermission: () => Promise<boolean>;
   refreshPermissionState: () => NotificationPermission;
   notificationPermission: NotificationPermission;
+  isIframe: boolean;
   soundEnabled: boolean;
   toggleSound: () => void;
   testSound: () => void;
@@ -95,14 +97,22 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [refreshPermissionState]);
 
+  const isIframe = isInsideIframe();
+
   const requestNotificationPermission = async (): Promise<boolean> => {
+    // Prime audio context and looping audio element on user gesture
+    await soundAlert.unlockAudio().catch(() => {});
+
     if (typeof window === 'undefined' || !('Notification' in window)) {
       return false;
     }
-    try {
-      // Prime audio context and looping audio element on user gesture
-      await soundAlert.unlockAudio();
 
+    if (isInsideIframe()) {
+      // In Chromium / Edge, notifications inside cross-origin iframes are restricted by browser policy
+      return false;
+    }
+
+    try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
 
@@ -144,9 +154,10 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  // Automatic Permission Request: triggers as soon as user enters the system
+  // Automatic Permission Request: triggers as soon as user enters the system (in top-level window/PWA)
   useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (isInsideIframe()) return;
 
     // 1. If permission is still default, try requesting automatically on mount / login
     if (Notification.permission === 'default') {
@@ -747,6 +758,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         requestNotificationPermission,
         refreshPermissionState,
         notificationPermission,
+        isIframe,
         soundEnabled,
         toggleSound,
         testSound,

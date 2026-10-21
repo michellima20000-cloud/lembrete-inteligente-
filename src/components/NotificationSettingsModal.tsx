@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, Bell, BellRing, Volume2, CheckCircle2, AlertTriangle, ExternalLink, ShieldCheck } from 'lucide-react';
+import { X, Bell, BellRing, Volume2, CheckCircle2, AlertTriangle, ExternalLink, ShieldCheck, Smartphone } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { soundAlert } from '../utils/audioAlert';
+import { isInsideIframe, openAppInDedicatedTab } from '../utils/browserEnv';
 
 interface NotificationSettingsModalProps {
   onClose: () => void;
@@ -11,6 +12,8 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
   const { notificationPermission, requestNotificationPermission, refreshPermissionState, testSound } = useReminders();
   const [isRequesting, setIsRequesting] = useState(false);
   const [testSentMessage, setTestSentMessage] = useState<string | null>(null);
+
+  const isIframe = isInsideIframe();
 
   const handleRequest = async () => {
     setIsRequesting(true);
@@ -37,6 +40,11 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
     setTestSentMessage(null);
     soundAlert.playChime();
     soundAlert.playAlarmBurst();
+
+    if (isIframe) {
+      setTestSentMessage('Sirene de teste disparada! Para notificações visuais na tela do celular ou computador, clique em "Abrir no Navegador / Celular" abaixo.');
+      return;
+    }
 
     let sent = false;
 
@@ -84,12 +92,6 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
     }
   };
 
-  const openInNewTab = () => {
-    if (typeof window !== 'undefined') {
-      window.open(window.location.href, '_blank');
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in select-none">
       <div className="relative w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl text-slate-100 animate-in zoom-in-95 max-h-[92vh] overflow-y-auto">
@@ -104,7 +106,7 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                 Alarmes em Segundo Plano
               </h2>
               <p className="text-xs text-slate-400">
-                Notificações e som com navegador minimizado
+                Notificações e som com navegador minimizado ou celular
               </p>
             </div>
           </div>
@@ -128,7 +130,9 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                   Notificações do Sistema:
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Avisos visuais na tela quando minimizado
+                  {isIframe
+                    ? 'Requer aba direta fora da pré-visualização'
+                    : 'Avisos visuais na tela quando minimizado'}
                 </span>
               </div>
             </div>
@@ -138,10 +142,14 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 Ativado
               </span>
+            ) : isIframe ? (
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                Requer Aba Direta
+              </span>
             ) : notificationPermission === 'denied' ? (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                 <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                Bloqueado
+                Bloqueado no Navegador
               </span>
             ) : (
               <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
@@ -159,7 +167,7 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                   Áudio e Sirene Contínua:
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Som em loop com suporte a MediaSession
+                  Som contínuo em segundo plano e MediaSession
                 </span>
               </div>
             </div>
@@ -179,7 +187,7 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                   Relógio em Segundo Plano:
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Web Worker dedicado ativo a cada 1s
+                  Web Worker dedicado ativo a cada 1 segundo
                 </span>
               </div>
             </div>
@@ -203,27 +211,46 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
 
         {/* Action Buttons */}
         <div className="mt-5 space-y-2.5">
-          {notificationPermission !== 'granted' && (
-            <button
-              onClick={handleRequest}
-              disabled={isRequesting}
-              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
-            >
-              <Bell className="w-4 h-4" />
-              <span>{isRequesting ? 'Solicitando...' : 'Ativar Permissão de Notificações'}</span>
-            </button>
-          )}
-
-          {notificationPermission === 'granted' && (
-            <div className="p-2.5 rounded-2xl bg-emerald-950/60 border border-emerald-500/30 flex items-center gap-2 text-xs text-emerald-200">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="font-medium text-emerald-100">
-                Notificações ativas! Seus avisos tocarão e aparecerão na tela mesmo em segundo plano.
-              </span>
+          {/* If inside iframe: highlight 1-click launch in new tab / mobile */}
+          {isIframe ? (
+            <div className="space-y-2">
+              <button
+                onClick={openAppInDedicatedTab}
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Abrir no Navegador / Celular</span>
+              </button>
+              <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                Dentro do painel embutido, os navegadores impedem avisos na tela por segurança. Ao abrir em aba direta, suas notificações nativas funcionam com o aparelho bloqueado ou minimizado!
+              </p>
             </div>
+          ) : (
+            <>
+              {notificationPermission !== 'granted' && (
+                <button
+                  onClick={handleRequest}
+                  disabled={isRequesting}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+                >
+                  <Bell className="w-4 h-4" />
+                  <span>{isRequesting ? 'Solicitando...' : 'Ativar Permissão de Notificações'}</span>
+                </button>
+              )}
+
+              {notificationPermission === 'granted' && (
+                <div className="p-3 rounded-2xl bg-emerald-950/60 border border-emerald-500/30 flex items-center gap-2.5 text-xs text-emerald-200">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-medium text-emerald-100">
+                    Notificações ativas! Seus avisos tocarão som e exibirão lembretes na tela mesmo em segundo plano.
+                  </span>
+                </div>
+              )}
+            </>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
+          {/* Test buttons */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
             <button
               onClick={handleSendTestNotification}
               className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:scale-[0.98] text-white font-semibold text-xs border border-slate-700 transition cursor-pointer"
@@ -235,7 +262,7 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
             <button
               onClick={() => {
                 testSound();
-                setTestSentMessage('Tocando som alto de alarme agora!');
+                setTestSentMessage('Tocando sirene de alarme contínua agora!');
               }}
               className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700/80 active:scale-[0.98] text-white font-semibold text-xs border border-slate-700 transition cursor-pointer"
             >
@@ -244,15 +271,15 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
             </button>
           </div>
 
-          <button
-            onClick={openInNewTab}
-            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-slate-400 hover:text-white text-[11px] transition cursor-pointer"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>Abrir aplicativo em aba dedicada</span>
-          </button>
+          {!isIframe && (
+            <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-1">
+              <Smartphone className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Compatível com Celular (Android / iOS) e Computador</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
+
