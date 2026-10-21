@@ -1,4 +1,4 @@
-import { Lembrete, StatusTarefa } from '../types';
+import type { Lembrete, StatusTarefa } from '../types/index.ts';
 
 export interface ParseReminderInput {
   texto: string;
@@ -51,6 +51,97 @@ export function cleanSpokenTranscript(raw: string): string {
   }
 
   return text.trim();
+}
+
+/**
+ * Accents and beautifies Portuguese speech transcript with correct diacritics,
+ * clean typography, capitalization, and numbers.
+ */
+export function formatTranscriptPretty(raw: string): string {
+  if (!raw) return '';
+  let text = cleanSpokenTranscript(raw);
+
+  // Common spoken Portuguese words that might lack diacritics from speech recognition
+  const accentMap: Record<string, string> = {
+    remedio: 'remédio',
+    remedios: 'remédios',
+    medico: 'médico',
+    medica: 'médica',
+    farmacia: 'farmácia',
+    amanha: 'amanhã',
+    reuniao: 'reunião',
+    reunioes: 'reuniões',
+    relatorio: 'relatório',
+    relatorios: 'relatórios',
+    apresentacao: 'apresentação',
+    almoco: 'almoço',
+    cafe: 'café',
+    pao: 'pão',
+    agua: 'água',
+    exercicio: 'exercício',
+    exercicios: 'exercícios',
+    licao: 'lição',
+    cartao: 'cartão',
+    sabado: 'sábado',
+    terca: 'terça',
+    horario: 'horário',
+    noticia: 'notícia',
+    clinica: 'clínica',
+    psicologo: 'psicólogo',
+    dentista: 'dentista',
+    urgente: 'urgente',
+    rapido: 'rápido',
+    ja: 'já',
+    voce: 'você',
+    nao: 'não',
+    tambem: 'também',
+    ate: 'até',
+    pos: 'pós',
+    saude: 'saúde',
+    pressao: 'pressão',
+    avaliacao: 'avaliação',
+    audiencia: 'audiência',
+    conferencia: 'conferência',
+    laboratorio: 'laboratório',
+    numero: 'número',
+    proximo: 'próximo',
+    proxima: 'próxima',
+    politica: 'política',
+    musica: 'música',
+    ingles: 'inglês',
+    portugues: 'português',
+    historia: 'história',
+    matematica: 'matemática',
+    fisica: 'física',
+    quimica: 'química',
+  };
+
+  for (const [plain, accented] of Object.entries(accentMap)) {
+    const regex = new RegExp(`\\b${plain}\\b`, 'gi');
+    text = text.replace(regex, (match) => {
+      if (match[0] === match[0].toUpperCase()) {
+        return accented.charAt(0).toUpperCase() + accented.slice(1);
+      }
+      return accented;
+    });
+  }
+
+  // Prettify common temporal words cleanly
+  text = text.replace(/\bas\s+(\d{1,2})\s*horas?\b/gi, 'às $1h');
+  text = text.replace(/\bas\s+(\d{1,2})\s*e\s*meia\b/gi, 'às $1:30');
+  text = text.replace(/\bas\s+(\d{1,2})\s*e\s*(\d{1,2})\b/gi, 'às $1:$2');
+  text = text.replace(/\bas\s+(\d{1,2}):(\d{2})\b/gi, 'às $1:$2');
+  text = text.replace(/\bas\s+(\d{1,2})h\b/gi, 'às $1h');
+  text = text.replace(/\bas\s+(\d{1,2})\b(?!\s*(?:minutos?|min|dias?|meses|anos))/gi, 'às $1h');
+  text = text.replace(/\bdaqui\s+a\s+(\d+)\s*min(?:utos?)?\b/gi, 'daqui a $1 minutos');
+
+  // Capitalize first character
+  text = text.trim();
+  if (text.length > 0) {
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  return text;
 }
 
 /**
@@ -202,15 +293,15 @@ export function isOnlyTemporalQuery(raw: string): boolean {
   if (!raw) return true;
   const stripped = raw
     .toLowerCase()
-    .replace(/(?:^|\b)(?:por\s+favor\s*,?\s*)?(?:me\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\s+esquecer|nao\s+esquecer|criar\s+lembrete|marcar)(?:\s+(?:de|para|que|o|a))?\b/gi, ' ')
-    .replace(/(?:^|\b)(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:às|as|pras|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})?\b/gi, ' ')
-    .replace(/(?:^|\b)\d{1,2}\s*horas?\b/gi, ' ')
-    .replace(/(?:^|\b)(?:às|as|pras)\s*\d{1,2}\s*e\s*meia\b/gi, ' ')
-    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*meia\s*hora\b/gi, ' ')
-    .replace(/(?:^|\b)(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:de\s+manh[ãa]|pela\s+manh[ãa]|cedo|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)\b/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:por\s+favor\s*,?\s*)?(?:me\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\s+esquecer|nao\s+esquecer|criar\s+lembrete|marcar)(?:\s+(?:de|para|que|o|a))?(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as|pras|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})?(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])\d{1,2}\s*horas?(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:às|as|pras)\s*\d{1,2}\s*e\s*meia(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*meia\s*hora(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:de\s+manh[ãa]|pela\s+manh[ãa]|cedo|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
     .replace(/\s+/g, '')
     .trim();
 
@@ -218,7 +309,7 @@ export function isOnlyTemporalQuery(raw: string): boolean {
 }
 
 export function parseReminderCommand(params: ParseReminderInput): ParseReminderResult {
-  const cleanInput = cleanSpokenTranscript(params.texto);
+  const cleanInput = formatTranscriptPretty(params.texto);
   const normalized = normalizeSpokenPortugueseNumbers(cleanInput);
   const rawText = normalized.trim();
   const text = rawText.toLowerCase();
@@ -415,25 +506,24 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
 
   // 5. Clean task title by removing command triggers and temporal words ANYWHERE in text
   let cleanedTitle = rawText;
+  const wordBound = (pattern: string) => new RegExp('(?:^|[^\\w\\u00C0-\\u017F])(?:' + pattern + ')(?=[^\\w\\u00C0-\\u017F]|$)', 'gi');
 
-  // Remove command prefixes/phrases
-  cleanedTitle = cleanedTitle
-    .replace(/(?:^|\b)(?:por\s+favor\s*,?\s*)?(?:me\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\s+esquecer|nao\s+esquecer|criar\s+lembrete|marcar)(?:\s+(?:de|para|que|o|a))?\b/gi, ' ')
-    .replace(/(?:^|\b)(?:depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:às|as|pras|para\s*as|para\s*às)?\s*\d{1,2}(?:h|:\d{2})\b/gi, ' ')
-    .replace(/(?:^|\b)\d{1,2}\s*horas?\b/gi, ' ')
-    .replace(/(?:^|\b)(?:às|as|pras)\s*\d{1,2}\s*e\s*meia\b/gi, ' ')
-    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:daqui\s*a|em)\s*meia\s*hora\b/gi, ' ')
-    .replace(/(?:^|\b)(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)\b/gi, ' ')
-    .replace(/(?:^|\b)(?:de\s+manh[ãa]|pela\s+manh[ãa]|cedo|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:por\\s+favor\\s*,?\\s*)?(?:me\\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\\s+esquecer|nao\\s+esquecer|criar\\s+lembrete|marcar)(?:\\s+(?:de|para|que|o|a))?'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:daqui\\s*a|em)\\s*\\d+\\s*(?:minutos?|min|horas?|h)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:daqui\\s*a|em)\\s*meia\\s*hora'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:com|avise|avisar)?\\s*\\d+\\s*(?:minutos?|min)\\s*(?:de\\s*anteced[êe]ncia|antes)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:às|as|pras|para\\s*as|para\\s*às)\\s*\\d{1,2}(?:\\s*(?:e\\s*(?:\\d{1,2}|meia)|:\\d{2}|h|horas?))?'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('\\d{1,2}\\s*(?:h|horas?|:\\d{2})'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:depois\\s+de\\s+amanh[ãa]|amanh[ãa]|hoje)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:na\\s+|no\\s+|próxim[ao]\\s+)?(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:[ -]feira)?'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:de\\s+manh[ãa]|pela\\s+manh[ãa]|cedo|à\\s+tarde|a\\s+tarde|pela\\s+tarde|à\\s+noite|a\\s+noite|pela\\s+noite)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:dia\\s+)\\d{1,2}'), ' ');
+  cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
   // Strip connector words at the beginning or end
   cleanedTitle = cleanedTitle
-    .replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+|com\s+|sobre\s+)/i, '')
-    .replace(/(?:\s+de|\s+para|\s+às|\s+as)$/i, '')
+    .replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+|com\s+|sobre\s+|às\s+|as\s+|na\s+|no\\s+)/i, '')
+    .replace(/(?:\s+de|\s+para|\s+às|\s+as|\s+na|\s+no)$/i, '')
     .trim();
 
   if (!cleanedTitle || cleanedTitle.length < 2) {

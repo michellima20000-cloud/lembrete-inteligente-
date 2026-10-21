@@ -1,8 +1,9 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { parseReminderCommand } from './src/utils/reminderParser.js';
+import { parseReminderCommand } from './src/utils/reminderParser.ts';
 
 dotenv.config();
 
