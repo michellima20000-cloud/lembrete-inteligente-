@@ -435,18 +435,23 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                 type="button"
                 onClick={isRecording ? stopVoiceCaptureAndSchedule : startVoiceCapture}
                 disabled={isProcessingAi}
-                className={`relative p-2.5 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                   isRecording
                     ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/50 scale-105 ring-2 ring-rose-400/50'
-                    : 'bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-900 active:scale-95'
+                    : 'bg-indigo-950/90 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-900/90 hover:text-white hover:border-indigo-400 shadow-sm shadow-indigo-950/50 active:scale-95'
                 }`}
                 title={isRecording ? 'Clique para agendar imediatamente' : 'Falar comando no microfone'}
+                aria-label="Falar comando no microfone"
               >
-                {isRecording ? <MicOff className="w-4 h-4 animate-bounce" /> : <Mic className="w-4 h-4" />}
+                {isRecording ? (
+                  <MicOff className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
+                ) : (
+                  <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+                )}
                 {isRecording && (
-                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
                   </span>
                 )}
               </button>
@@ -455,17 +460,17 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               <button
                 type="submit"
                 disabled={isProcessingAi || !inputText.trim()}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 px-4 h-11 sm:h-12 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
               >
                 {isProcessingAi ? (
                   <>
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     <span>Agendando...</span>
                   </>
                 ) : (
                   <>
                     <span>Agendar</span>
-                    <Send className="w-3.5 h-3.5" />
+                    <Send className="w-4 h-4" />
                   </>
                 )}
               </button>
