@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { PWAInstallButton } from './PWAInstallButton';
+import { soundAlert } from '../utils/audioAlert';
 
 export const LoginScreen: React.FC = () => {
   const {
@@ -48,6 +49,10 @@ export const LoginScreen: React.FC = () => {
 
   const handleQuickRegister = async () => {
     if (!email.trim() || !password.trim()) return;
+    soundAlert.unlockAudio().catch(() => {});
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
     setIsSubmitting(true);
     clearAuthError();
     try {
@@ -62,6 +67,11 @@ export const LoginScreen: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) return;
+
+    soundAlert.unlockAudio().catch(() => {});
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
 
     setResetSentMessage(null);
     setIsSubmitting(true);

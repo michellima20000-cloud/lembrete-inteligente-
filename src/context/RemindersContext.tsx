@@ -31,6 +31,7 @@ interface RemindersContextType {
   }) => Promise<void>;
   lastAiResponse: AiParseResponse | null;
   requestNotificationPermission: () => Promise<boolean>;
+  refreshPermissionState: () => NotificationPermission;
   notificationPermission: NotificationPermission;
   soundEnabled: boolean;
   toggleSound: () => void;
@@ -53,12 +54,46 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const triggeredIdsRef = useRef<Set<string>>(new Set());
 
-  // Check notification permission on mount
-  useEffect(() => {
+  // Real-time permission checker
+  const refreshPermissionState = useCallback((): NotificationPermission => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
-      setNotificationPermission(Notification.permission);
+      const current = Notification.permission;
+      setNotificationPermission(current);
+      return current;
     }
+    return 'default';
   }, []);
+
+  // Monitor permission state automatically across tab switches & settings changes
+  useEffect(() => {
+    refreshPermissionState();
+
+    const handleFocus = () => {
+      refreshPermissionState();
+    };
+
+    window.addEventListener('focus', handleFocus);
+
+    let permStatus: PermissionStatus | null = null;
+    if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+      navigator.permissions
+        .query({ name: 'notifications' as PermissionName })
+        .then((status) => {
+          permStatus = status;
+          status.onchange = () => {
+            refreshPermissionState();
+          };
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      if (permStatus) {
+        permStatus.onchange = null;
+      }
+    };
+  }, [refreshPermissionState]);
 
   const requestNotificationPermission = async (): Promise<boolean> => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -108,6 +143,40 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
   };
+
+  // Automatic Permission Request: triggers as soon as user enters the system
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+
+    // 1. If permission is still default, try requesting automatically on mount / login
+    if (Notification.permission === 'default') {
+      requestNotificationPermission().catch(() => {});
+    }
+
+    // 2. Also register one-time gesture trigger to satisfy strict browser user-activation rules
+    const onUserInteraction = async () => {
+      window.removeEventListener('click', onUserInteraction);
+      window.removeEventListener('touchstart', onUserInteraction);
+      window.removeEventListener('keydown', onUserInteraction);
+
+      // Pre-unlock audio engine on first gesture
+      soundAlert.unlockAudio().catch(() => {});
+
+      if ('Notification' in window && Notification.permission === 'default') {
+        await requestNotificationPermission().catch(() => {});
+      }
+    };
+
+    window.addEventListener('click', onUserInteraction, { once: true, passive: true });
+    window.addEventListener('touchstart', onUserInteraction, { once: true, passive: true });
+    window.addEventListener('keydown', onUserInteraction, { once: true, passive: true });
+
+    return () => {
+      window.removeEventListener('click', onUserInteraction);
+      window.removeEventListener('touchstart', onUserInteraction);
+      window.removeEventListener('keydown', onUserInteraction);
+    };
+  }, [currentUser?.id]);
 
   // Helper to load isolated partition
   const loadLocalPartition = useCallback((userId: string): Lembrete[] => {
@@ -676,6 +745,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createManualReminder,
         lastAiResponse,
         requestNotificationPermission,
+        refreshPermissionState,
         notificationPermission,
         soundEnabled,
         toggleSound,
