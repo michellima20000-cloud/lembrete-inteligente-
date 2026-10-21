@@ -213,18 +213,13 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
         <div className="mt-5 space-y-2.5">
           {/* If inside iframe: highlight 1-click launch in new tab / mobile */}
           {isIframe ? (
-            <div className="space-y-2">
-              <button
-                onClick={openAppInDedicatedTab}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>Abrir no Navegador / Celular</span>
-              </button>
-              <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-                Dentro do painel embutido, os navegadores impedem avisos na tela por segurança. Ao abrir em aba direta, suas notificações nativas funcionam com o aparelho bloqueado ou minimizado!
-              </p>
-            </div>
+            <button
+              onClick={openAppInDedicatedTab}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            >
+              <ExternalLink className="w-4 h-4" />
+              <span>Abrir no Navegador / Celular</span>
+            </button>
           ) : (
             <>
               {notificationPermission !== 'granted' && (
