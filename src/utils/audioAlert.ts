@@ -80,6 +80,7 @@ class SoundAlertManager {
   private isSoundEnabled = true;
   private isRinging = false;
   private loopAudioElement: HTMLAudioElement | null = null;
+  private audioPlayPromise: Promise<void> | null = null;
   private webAudioInterval: ReturnType<typeof setInterval> | null = null;
   private vibrationInterval: ReturnType<typeof setInterval> | null = null;
   private cachedWavUri: string | null = null;
@@ -90,16 +91,38 @@ class SoundAlertManager {
         try {
           const ctx = this.getAudioContext();
           if (ctx && ctx.state === 'suspended') {
-            ctx.resume();
+            ctx.resume().catch(() => {});
           }
           if (this.loopAudioElement && this.loopAudioElement.paused && this.isRinging) {
-            this.loopAudioElement.play().catch(() => {});
+            if (!this.audioPlayPromise) {
+              this.audioPlayPromise = this.loopAudioElement.play();
+              this.audioPlayPromise
+                ?.catch((err) => this.handleAudioError(err))
+                .finally(() => {
+                  this.audioPlayPromise = null;
+                });
+            }
           }
         } catch {}
       };
       window.addEventListener('click', unlockAudio, { passive: true });
       window.addEventListener('touchstart', unlockAudio, { passive: true });
       window.addEventListener('keydown', unlockAudio, { passive: true });
+    }
+  }
+
+  private handleAudioError(err: any) {
+    if (!err) return;
+    // Gracefully ignore AbortError caused by pause() interrupting play() when user dismisses/snoozes
+    if (
+      err.name === 'AbortError' ||
+      (typeof err.message === 'string' && (err.message.includes('interrupted') || err.message.includes('pause')))
+    ) {
+      return;
+    }
+    // Autoplay restrictions are normal before the first user gesture
+    if (err.name === 'NotAllowedError') {
+      return;
     }
   }
 
@@ -242,17 +265,32 @@ class SoundAlertManager {
     try {
       const audio = this.getLoopAudioElement();
       if (audio) {
-        audio.currentTime = 0;
         audio.volume = 1.0;
-        const playPromise = audio.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn('HTML5 loop audio autoplay deferred to interaction:', err);
-          });
+        if (this.audioPlayPromise) {
+          this.audioPlayPromise = this.audioPlayPromise
+            .then(() => {
+              if (this.isRinging && audio.paused) {
+                try {
+                  audio.currentTime = 0;
+                } catch {}
+                return audio.play();
+              }
+            })
+            .catch((err) => this.handleAudioError(err));
+        } else {
+          try {
+            audio.currentTime = 0;
+          } catch {}
+          this.audioPlayPromise = audio.play();
+          this.audioPlayPromise
+            ?.catch((err) => this.handleAudioError(err))
+            .finally(() => {
+              this.audioPlayPromise = null;
+            });
         }
       }
     } catch (e) {
-      console.warn('Loop audio play failed:', e);
+      // Loop audio play deferred
     }
 
     // 2. Play immediate Web Audio burst for instant maximum loudness
@@ -296,12 +334,29 @@ class SoundAlertManager {
   public stopRingingAlarm() {
     this.isRinging = false;
 
-    // Stop HTML5 looping audio
+    // Stop HTML5 looping audio safely without interrupting in-flight play()
     if (this.loopAudioElement) {
-      try {
-        this.loopAudioElement.pause();
-        this.loopAudioElement.currentTime = 0;
-      } catch {}
+      const audio = this.loopAudioElement;
+      if (this.audioPlayPromise) {
+        this.audioPlayPromise
+          .then(() => {
+            if (!this.isRinging) {
+              try {
+                audio.pause();
+                audio.currentTime = 0;
+              } catch {}
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            this.audioPlayPromise = null;
+          });
+      } else {
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+        } catch {}
+      }
     }
 
     // Stop repeating timers
