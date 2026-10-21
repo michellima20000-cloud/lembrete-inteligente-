@@ -11,7 +11,11 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
+        includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'sw-custom.js'],
+        workbox: {
+          importScripts: ['/sw-custom.js'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        },
         manifest: {
           id: '/',
           name: 'Lembrete Inteligente',
