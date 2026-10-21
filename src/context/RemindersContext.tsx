@@ -223,9 +223,12 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         : `Horário do compromisso alcançado: ${item.titulo}! Clique para abrir o lembrete.`;
 
     // 1. Android Chrome / PWA Service Worker notification (Supports vibration, action buttons & background wake)
+    let dispatched = false;
     if ('serviceWorker' in navigator) {
       try {
-        const reg = await navigator.serviceWorker.ready;
+        const swReadyPromise = navigator.serviceWorker.ready;
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 500));
+        const reg = await Promise.race([swReadyPromise, timeoutPromise]);
         if (reg && typeof reg.showNotification === 'function') {
           await reg.showNotification(title, {
             body,
@@ -241,28 +244,30 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               { action: 'snooze', title: '⏱ Adiar 10m' },
             ],
           } as any);
-          return;
+          dispatched = true;
         }
       } catch (swErr) {
         console.warn('Service worker showNotification notice:', swErr);
       }
     }
 
-    // 2. Desktop & iOS Safari fallback
-    try {
-      const notif = new Notification(title, {
-        body,
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
-        tag: item.id,
-        requireInteraction: true,
-      } as any);
-      notif.onclick = () => {
-        window.focus();
-        notif.close();
-      };
-    } catch (e) {
-      console.warn('Fallback Notification constructor failed:', e);
+    // 2. Desktop & iOS Safari fallback or complementary dispatch
+    if (!dispatched) {
+      try {
+        const notif = new Notification(title, {
+          body,
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          tag: item.id,
+          requireInteraction: true,
+        } as any);
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+        };
+      } catch (e) {
+        console.warn('Fallback Notification constructor failed:', e);
+      }
     }
   };
 

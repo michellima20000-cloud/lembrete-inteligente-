@@ -114,6 +114,13 @@ export function formatTranscriptPretty(raw: string): string {
     matematica: 'matemática',
     fisica: 'física',
     quimica: 'química',
+    aniversario: 'aniversário',
+    fatura: 'fatura',
+    boleto: 'boleto',
+    pagamento: 'pagamento',
+    consulta: 'consulta',
+    academia: 'academia',
+    treino: 'treino',
   };
 
   for (const [plain, accented] of Object.entries(accentMap)) {
@@ -126,7 +133,14 @@ export function formatTranscriptPretty(raw: string): string {
     });
   }
 
-  // Prettify common temporal words cleanly
+  // Prettify common temporal words and week days
+  text = text.replace(/\bsegunda\s+feira\b/gi, 'segunda-feira');
+  text = text.replace(/\bterca\s+feira\b/gi, 'terça-feira');
+  text = text.replace(/\bterça\s+feira\b/gi, 'terça-feira');
+  text = text.replace(/\bquarta\s+feira\b/gi, 'quarta-feira');
+  text = text.replace(/\bquinta\s+feira\b/gi, 'quinta-feira');
+  text = text.replace(/\bsexta\s+feira\b/gi, 'sexta-feira');
+
   text = text.replace(/\bas\s+(\d{1,2})\s*horas?\b/gi, 'às $1h');
   text = text.replace(/\bas\s+(\d{1,2})\s*e\s*meia\b/gi, 'às $1:30');
   text = text.replace(/\bas\s+(\d{1,2})\s*e\s*(\d{1,2})\b/gi, 'às $1:$2');
@@ -134,6 +148,8 @@ export function formatTranscriptPretty(raw: string): string {
   text = text.replace(/\bas\s+(\d{1,2})h\b/gi, 'às $1h');
   text = text.replace(/\bas\s+(\d{1,2})\b(?!\s*(?:minutos?|min|dias?|meses|anos))/gi, 'às $1h');
   text = text.replace(/\bdaqui\s+a\s+(\d+)\s*min(?:utos?)?\b/gi, 'daqui a $1 minutos');
+  text = text.replace(/\bdaqui\s+meia\s+hora\b/gi, 'daqui a 30 minutos');
+  text = text.replace(/\bdaqui\s+uma\s+hora\b/gi, 'daqui a 60 minutos');
 
   // Capitalize first character
   text = text.trim();

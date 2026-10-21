@@ -1,15 +1,24 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, LogOut, CalendarCheck } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellOff } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { UserAccountModal } from './UserAccountModal';
+import { NotificationSettingsModal } from './NotificationSettingsModal';
+import { soundAlert } from '../utils/audioAlert';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
-  const { soundEnabled, toggleSound } = useReminders();
+  const { soundEnabled, toggleSound, notificationPermission } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+
+  const handleNotificationClick = () => {
+    // Prime the audio engine on user gesture
+    soundAlert.unlockAudio().catch(() => {});
+    setShowNotificationModal(true);
+  };
 
   return (
     <>
@@ -41,6 +50,29 @@ export const Header: React.FC = () => {
               title={soundEnabled ? 'Som ativado (clique para desativar)' : 'Som desativado (clique para ativar)'}
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+
+            {/* Web Notification Toggle & Background Alarm Settings */}
+            <button
+              onClick={handleNotificationClick}
+              className={`p-2 rounded-xl transition-all cursor-pointer relative active:scale-95 ${
+                notificationPermission === 'granted'
+                  ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/60'
+                  : 'bg-slate-800 text-amber-300 border border-amber-500/30 hover:bg-slate-700 hover:text-amber-200'
+              }`}
+              title="Alarmes em Segundo Plano e Notificações (Clique para testar e configurar)"
+              aria-label="Configurar alarmes e notificações em segundo plano"
+            >
+              {notificationPermission === 'granted' ? (
+                <Bell className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <BellOff className="w-4 h-4 text-amber-400" />
+              )}
+              {notificationPermission === 'granted' ? (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              ) : (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              )}
             </button>
 
             {/* Authenticated User Chip */}
@@ -85,6 +117,9 @@ export const Header: React.FC = () => {
       </header>
 
       {showUserModal && <UserAccountModal onClose={() => setShowUserModal(false)} />}
+      {showNotificationModal && (
+        <NotificationSettingsModal onClose={() => setShowNotificationModal(false)} />
+      )}
     </>
   );
 };

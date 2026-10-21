@@ -43,6 +43,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
   const isRecordingRef = useRef<boolean>(false);
   const latestTranscriptRef = useRef<string>('');
   const isAutoSchedulingRef = useRef<boolean>(false);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // Clear countdown intervals safely
   const clearCountdown = useCallback(() => {
@@ -170,7 +171,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = 'pt-BR';
-        recognition.maxAlternatives = 3;
+        recognition.maxAlternatives = 5;
 
         recognition.onresult = (event: any) => {
           let finalTranscript = '';
@@ -178,7 +179,18 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
           for (let i = 0; i < event.results.length; i++) {
             const item = event.results[i];
-            const text = item[0]?.transcript || '';
+            // Evaluate alternative transcript hypotheses for highest accuracy
+            let text = item[0]?.transcript || '';
+            let maxConfidence = item[0]?.confidence || 0;
+
+            for (let a = 1; a < item.length; a++) {
+              const alt = item[a];
+              if (alt && alt.confidence > maxConfidence) {
+                maxConfidence = alt.confidence;
+                text = alt.transcript;
+              }
+            }
+
             if (item.isFinal) {
               finalTranscript += (finalTranscript ? ' ' : '') + text;
             } else {
@@ -279,12 +291,15 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     };
   }, [isRecording]);
 
-  const startVoiceCapture = () => {
+  const startVoiceCapture = async () => {
     setFeedbackMessage(null);
     clearCountdown();
     isAutoSchedulingRef.current = false;
     setSpeechTranscript('');
     latestTranscriptRef.current = '';
+
+    // Prime audio engine for background alarms
+    await soundAlert.unlockAudio();
 
     if (!recognitionRef.current) {
       setFeedbackMessage({
@@ -292,6 +307,24 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         text: 'Seu navegador não suporta reconhecimento de voz direto. Digite seu lembrete no campo abaixo.',
       });
       return;
+    }
+
+    // Activate hardware-level DSP voice isolation, acoustic echo cancellation and automatic gain control
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 48000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        mediaStreamRef.current = stream;
+      } catch {
+        // Fall back gracefully to direct speech recognition if getUserMedia is denied
+      }
     }
 
     try {
@@ -302,6 +335,10 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       console.warn('Erro ao iniciar reconhecimento:', e);
       setIsRecording(false);
       isRecordingRef.current = false;
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
     }
   };
 
@@ -309,6 +346,11 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     isRecordingRef.current = false;
     setIsRecording(false);
     clearCountdown();
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
 
     if (recognitionRef.current) {
       try {
@@ -326,6 +368,12 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     clearCountdown();
     setSpeechTranscript('');
     latestTranscriptRef.current = '';
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
