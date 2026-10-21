@@ -15,22 +15,14 @@ export const Header: React.FC = () => {
     <>
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
-          {/* Brand & Status Indicator */}
+          {/* Brand Wordmark */}
           <div className="flex items-center gap-2.5">
-            <div className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-emerald-500 shadow-md shadow-indigo-500/25">
-              <CalendarCheck className="w-5 h-5 text-white" />
-              <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-900"></span>
-              </span>
+            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20">
+              <CalendarCheck className="w-4.5 h-4.5" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-base font-black tracking-tight text-white">
-                  Lembrete <span className="text-indigo-400">Inteligente</span>
-                </h1>
-              </div>
-            </div>
+            <h1 className="text-base font-bold tracking-tight text-white">
+              Lembrete <span className="text-indigo-400">Inteligente</span>
+            </h1>
           </div>
 
           {/* Actions & Profile */}

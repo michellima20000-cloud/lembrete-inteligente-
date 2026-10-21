@@ -7,11 +7,8 @@ import {
   RotateCcw,
   Trash2,
   AlertTriangle,
-  ChevronRight,
   MoreVertical,
   Bell,
-  Sparkles,
-  Filter,
   Search,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
@@ -23,7 +20,6 @@ export const TimelineAgenda: React.FC = () => {
   const { currentUser } = useUser();
 
   const [activeTab, setActiveTab] = useState<'pendentes' | 'adiados' | 'concluídos' | 'todos'>('pendentes');
-  const [selectedCategory, setSelectedCategory] = useState<string>('todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
@@ -32,17 +28,12 @@ export const TimelineAgenda: React.FC = () => {
   const postponedCount = reminders.filter((r) => r.status_tarefa === 'adiado').length;
   const completedCount = reminders.filter((r) => r.status_tarefa === 'concluído').length;
 
-  // Filter items
+  // Filter items strictly by status tab and search query
   const filteredReminders = reminders.filter((item) => {
-    // Tab filter
     if (activeTab === 'pendentes' && item.status_tarefa !== 'pendente') return false;
     if (activeTab === 'adiados' && item.status_tarefa !== 'adiado') return false;
     if (activeTab === 'concluídos' && item.status_tarefa !== 'concluído') return false;
 
-    // Category filter
-    if (selectedCategory !== 'todas' && item.categoria !== selectedCategory) return false;
-
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
@@ -115,120 +106,87 @@ export const TimelineAgenda: React.FC = () => {
 
   return (
     <section className="mt-6 space-y-4">
-      {/* Header and Filter Controls */}
+      {/* Clean Header & Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-white tracking-wide">
-              Cronograma & Agenda
-            </h2>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              Ordem Cronológica
-            </span>
-          </div>
+          <h2 className="text-base font-bold text-white tracking-tight">
+            Agenda de Lembretes
+          </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Lembretes isolados para: <strong className="text-indigo-300">{currentUser?.nome || 'sua conta'}</strong>
+            Organizados em ordem cronológica para <span className="text-indigo-300 font-medium">{currentUser?.nome || 'você'}</span>
           </p>
         </div>
 
         {/* Search */}
-        <div className="relative w-full sm:w-56">
+        <div className="relative w-full sm:w-60">
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Buscar compromisso..."
-            className="w-full bg-slate-900 border border-slate-800 rounded-2xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition shadow-inner"
           />
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-900/80 border border-slate-800 overflow-x-auto scrollbar-none">
+      {/* Modern Full-Width Segmented Tabs - Zero Lateral Overflow */}
+      <div className="w-full grid grid-cols-4 gap-1 p-1 rounded-2xl bg-slate-900/90 border border-slate-800/80">
         <button
           onClick={() => setActiveTab('pendentes')}
-          className={`flex-1 min-w-[90px] flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold transition ${
+          className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl text-xs font-semibold transition cursor-pointer ${
             activeTab === 'pendentes'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <span>Pendentes</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-              activeTab === 'pendentes' ? 'bg-indigo-900/70 text-indigo-200' : 'bg-slate-800 text-slate-400'
-            }`}
-          >
+          <span className="truncate">Pendentes</span>
+          <span className="text-[10px] tabular-nums font-bold opacity-80">
             {pendingCount}
           </span>
         </button>
 
         <button
           onClick={() => setActiveTab('adiados')}
-          className={`flex-1 min-w-[90px] flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold transition ${
+          className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl text-xs font-semibold transition cursor-pointer ${
             activeTab === 'adiados'
               ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <span>Adiados</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-              activeTab === 'adiados' ? 'bg-amber-950/70 text-amber-200' : 'bg-slate-800 text-slate-400'
-            }`}
-          >
+          <span className="truncate">Adiados</span>
+          <span className="text-[10px] tabular-nums font-bold opacity-80">
             {postponedCount}
           </span>
         </button>
 
         <button
           onClick={() => setActiveTab('concluídos')}
-          className={`flex-1 min-w-[90px] flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold transition ${
+          className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl text-xs font-semibold transition cursor-pointer ${
             activeTab === 'concluídos'
               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <span>Concluídos</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-              activeTab === 'concluídos' ? 'bg-emerald-950/70 text-emerald-200' : 'bg-slate-800 text-slate-400'
-            }`}
-          >
+          <span className="truncate">Concluídos</span>
+          <span className="text-[10px] tabular-nums font-bold opacity-80">
             {completedCount}
           </span>
         </button>
 
         <button
           onClick={() => setActiveTab('todos')}
-          className={`min-w-[70px] flex items-center justify-center gap-1 py-2 px-3 rounded-xl text-xs font-semibold transition ${
+          className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl text-xs font-semibold transition cursor-pointer ${
             activeTab === 'todos'
               ? 'bg-slate-700 text-white shadow'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <span>Todos</span>
-          <span className="text-[10px] text-slate-400">({reminders.length})</span>
+          <span className="truncate">Todos</span>
+          <span className="text-[10px] tabular-nums font-bold opacity-80">
+            {reminders.length}
+          </span>
         </button>
-      </div>
-
-      {/* Category Pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none">
-        <Filter className="w-3 h-3 text-slate-500 shrink-0 ml-1" />
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setSelectedCategory(cat)}
-            className={`px-2.5 py-1 rounded-xl text-[11px] font-medium capitalize whitespace-nowrap transition ${
-              selectedCategory === cat
-                ? 'bg-slate-700 text-white font-semibold'
-                : 'bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-800/80'
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
       </div>
 
       {/* Items List */}
@@ -284,24 +242,22 @@ export const TimelineAgenda: React.FC = () => {
 
                   {/* Task Content */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                      {/* Urgency Badge */}
+                    {/* Clean Subtle Metadata Header */}
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
+                      {item.categoria && item.categoria !== 'todas' && item.categoria !== 'Geral' && (
+                        <>
+                          <span className="text-slate-300 font-medium">{item.categoria}</span>
+                          <span className="text-slate-600">·</span>
+                        </>
+                      )}
                       {item.urgencia === 'alta' && (
-                        <span className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          Urgente
-                        </span>
+                        <>
+                          <span className="text-rose-400 font-bold uppercase text-[9px] tracking-wider">Urgente</span>
+                          <span className="text-slate-600">·</span>
+                        </>
                       )}
-
-                      {/* Category Badge */}
-                      {item.categoria && (
-                        <span className="px-2 py-0.2 rounded-md text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700/60">
-                          {item.categoria}
-                        </span>
-                      )}
-
-                      {/* Postponed Badge */}
                       {isPostponed && (
-                        <span className="px-2 py-0.2 rounded-md text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <span className="text-amber-400 font-medium">
                           Adiado ({item.adiado_vezes || 1}x)
                         </span>
                       )}
@@ -317,35 +273,40 @@ export const TimelineAgenda: React.FC = () => {
                     </h3>
 
                     {/* Schedule Time & Countdown */}
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-2 text-xs">
                       {/* Scheduled Time */}
-                      <span className="flex items-center gap-1 text-slate-300 font-medium">
-                        <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="flex items-center gap-1.5 text-slate-300 font-medium">
+                        <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                         <span>
-                          {timeInfo.dayPrefix} às <strong>{timeInfo.timeFormatted}</strong>
+                          {timeInfo.dayPrefix} às <strong className="text-white font-semibold">{timeInfo.timeFormatted}</strong>
                         </span>
                       </span>
 
-                      {/* Relative Countdown Badge */}
                       {!isCompleted && (
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 ${
-                            timeInfo.isOverdue
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
-                              : 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
-                          }`}
-                        >
-                          {timeInfo.isOverdue && <AlertTriangle className="w-3 h-3 text-rose-400" />}
-                          {timeInfo.relativeLabel}
-                        </span>
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span
+                            className={`font-medium text-xs flex items-center gap-1 ${
+                              timeInfo.isOverdue
+                                ? 'text-rose-400 font-semibold'
+                                : 'text-indigo-300'
+                            }`}
+                          >
+                            {timeInfo.isOverdue && <AlertTriangle className="w-3 h-3 text-rose-400 inline" />}
+                            {timeInfo.relativeLabel}
+                          </span>
+                        </>
                       )}
 
                       {/* Antecedência Notice */}
                       {item.antecedencia_minutos > 0 && (
-                        <span className="flex items-center gap-1 text-[11px] text-amber-400/90 font-medium">
-                          <Bell className="w-3 h-3" />
-                          Aviso {item.antecedencia_minutos} min antes
-                        </span>
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className="text-amber-300/90 text-[11px] font-medium flex items-center gap-1">
+                            <Bell className="w-3 h-3 text-amber-400" />
+                            Aviso {item.antecedencia_minutos}m antes
+                          </span>
+                        </>
                       )}
                     </div>
                   </div>

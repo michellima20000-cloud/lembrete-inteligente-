@@ -8,7 +8,6 @@ import { ActiveAlarmModal } from './components/ActiveAlarmModal';
 import { ManualAddModal } from './components/ManualAddModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LoginScreen } from './components/LoginScreen';
-import { BackgroundAlarmBanner } from './components/BackgroundAlarmBanner';
 
 function MainApp() {
   const { isAuthenticated, isAuthReady } = useUser();
@@ -42,9 +41,6 @@ function MainApp() {
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-4 sm:py-6">
         {/* Voice and Text AI Brain Input */}
         <VoiceAndTextInput onOpenManualModal={() => setShowManualModal(true)} />
-
-        {/* Background Alarm and Notifications Guide */}
-        <BackgroundAlarmBanner />
 
         {/* Timeline Agenda strictly ordered */}
         <TimelineAgenda />

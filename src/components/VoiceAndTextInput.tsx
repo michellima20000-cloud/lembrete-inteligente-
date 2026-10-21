@@ -344,52 +344,58 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
   const hasDetectedSpeech = speechTranscript.trim().length > 0;
   const isSpeechValid = hasDetectedSpeech && !isOnlyTemporalQuery(speechTranscript);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea to fit text without showing ugly vertical scrollbars
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.max(60, textareaRef.current.scrollHeight)}px`;
+    }
+  }, [inputText]);
 
   return (
-    <section className="bg-slate-900/80 rounded-3xl p-4 sm:p-5 border border-slate-800 shadow-xl backdrop-blur-md">
-      {/* Header Info */}
+    <section className="bg-slate-900/90 rounded-3xl p-4 sm:p-5 border border-slate-800/90 shadow-xl backdrop-blur-md">
+      {/* Clean Modern Header */}
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-400">
-            <CalendarCheck className="w-4 h-4 text-emerald-400" />
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+            <CalendarCheck className="w-4 h-4 text-indigo-400" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white tracking-wide flex items-center gap-1.5">
-              <span>Comando por Voz ou Texto</span>
-              <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 text-[10px] font-extrabold uppercase tracking-wider">
-                Automático
-              </span>
+            <h2 className="text-sm font-bold text-white tracking-tight">
+              Criar Lembrete
             </h2>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-amber-400" />
-              <span>Fale e o lembrete é compreendido e agendado sozinho</span>
+            <p className="text-[11px] text-slate-400">
+              Fale no microfone ou digite seu compromisso
             </p>
           </div>
         </div>
 
         <button
           onClick={onOpenManualModal}
-          className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-indigo-300 py-1 px-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 transition cursor-pointer"
-          title="Agendamento manual por data e hora"
+          className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white py-1.5 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700/80 border border-slate-700/60 transition cursor-pointer"
+          title="Agendamento manual com campos de data e hora"
         >
-          <Sliders className="w-3 h-3 text-indigo-400" />
-          Manual
+          <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Manual</span>
         </button>
       </div>
 
       {/* Main Input Box */}
       <form onSubmit={handleSubmit} className="relative">
-        <div className="relative rounded-2xl bg-slate-800/90 border border-slate-700 focus-within:border-indigo-500 transition shadow-inner">
+        <div className="relative rounded-2xl bg-slate-950/70 border border-slate-800 focus-within:border-indigo-500/80 transition shadow-inner">
           <textarea
+            ref={textareaRef}
             rows={2}
             value={inputText}
             onChange={(e) => {
               setInputText(e.target.value);
               latestTranscriptRef.current = e.target.value;
             }}
-            placeholder='Fale no microfone ou digite: "Hoje às 15h tomar remédio" ou "Pagar conta amanhã às 10h"...'
+            placeholder='Ex: "Hoje às 15h tomar remédio" ou "Pagar conta amanhã às 10h"'
             disabled={isProcessingAi}
-            className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-400 focus:outline-none resize-none disabled:opacity-50"
+            className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none resize-none overflow-hidden scrollbar-none disabled:opacity-50 min-h-[60px]"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -399,33 +405,23 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
           />
 
           {/* Bottom Bar inside Input */}
-          <div className="flex items-center justify-between px-3 pb-2.5 pt-1 border-t border-slate-700/40">
-            {/* Antecedência Selector */}
-            <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none">
-              <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 shrink-0">
-                <Clock className="w-3 h-3 text-indigo-400" />
-                Avisar:
-              </span>
-              {[
-                { label: 'No horário', val: 0 },
-                { label: '5m antes', val: 5 },
-                { label: '10m antes', val: 10 },
-                { label: '15m antes', val: 15 },
-                { label: '30m antes', val: 30 },
-              ].map((opt) => (
-                <button
-                  key={opt.val}
-                  type="button"
-                  onClick={() => setSelectedAntecedencia(opt.val)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition shrink-0 cursor-pointer ${
-                    selectedAntecedencia === opt.val
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+          <div className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-t border-slate-800/60 gap-2">
+            {/* Antecedência Compact Dropdown - Clean & Zero Lateral Overflow */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <label htmlFor="antecedencia-select" className="sr-only">Aviso prévio</label>
+              <select
+                id="antecedencia-select"
+                value={selectedAntecedencia}
+                onChange={(e) => setSelectedAntecedencia(Number(e.target.value))}
+                className="bg-slate-900 hover:bg-slate-800/90 text-slate-300 text-xs rounded-xl px-2.5 py-1.5 border border-slate-700/60 focus:outline-none focus:border-indigo-500 cursor-pointer transition font-medium"
+              >
+                <option value={0}>Avisar no horário</option>
+                <option value={5}>Avisar 5m antes</option>
+                <option value={10}>Avisar 10m antes</option>
+                <option value={15}>Avisar 15m antes</option>
+                <option value={30}>Avisar 30m antes</option>
+              </select>
             </div>
 
             {/* Actions: Mic & Submit */}
@@ -435,23 +431,23 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                 type="button"
                 onClick={isRecording ? stopVoiceCaptureAndSchedule : startVoiceCapture}
                 disabled={isProcessingAi}
-                className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
+                className={`relative w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                   isRecording
                     ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/50 scale-105 ring-2 ring-rose-400/50'
-                    : 'bg-indigo-950/90 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-900/90 hover:text-white hover:border-indigo-400 shadow-sm shadow-indigo-950/50 active:scale-95'
+                    : 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white shadow-sm active:scale-95'
                 }`}
                 title={isRecording ? 'Clique para agendar imediatamente' : 'Falar comando no microfone'}
                 aria-label="Falar comando no microfone"
               >
                 {isRecording ? (
-                  <MicOff className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
+                  <MicOff className="w-5 h-5 animate-pulse" />
                 ) : (
-                  <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+                  <Mic className="w-5 h-5" />
                 )}
                 {isRecording && (
-                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
                   </span>
                 )}
               </button>
@@ -460,17 +456,17 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               <button
                 type="submit"
                 disabled={isProcessingAi || !inputText.trim()}
-                className="flex items-center gap-1.5 px-4 h-11 sm:h-12 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 sm:px-4 h-10 sm:h-11 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/25 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
               >
                 {isProcessingAi ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     <span>Agendando...</span>
                   </>
                 ) : (
                   <>
                     <span>Agendar</span>
-                    <Send className="w-4 h-4" />
+                    <Send className="w-3.5 h-3.5" />
                   </>
                 )}
               </button>
