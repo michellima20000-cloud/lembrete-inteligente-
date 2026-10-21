@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck,
   Clock,
   Mic,
-  Flame,
   AlertCircle,
   Mail,
   Lock,
@@ -137,7 +135,7 @@ export const LoginScreen: React.FC = () => {
           </h1>
           <p className="mt-1 text-xs text-slate-400 leading-relaxed max-w-xs mx-auto text-center">
             {mode === 'login'
-              ? 'Entre com seu e-mail e senha cadastrados no Firebase'
+              ? 'Entre com seu e-mail e senha para acessar'
               : 'Cadastre sua conta para sincronizar seus lembretes'}
           </p>
 
@@ -280,7 +278,7 @@ export const LoginScreen: React.FC = () => {
 
             <div>
               <label className="block text-[11px] font-semibold text-slate-300 mb-1 ml-1">
-                E-mail da Conta Firebase
+                E-mail
               </label>
               <div className="relative flex items-center">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" />
@@ -358,45 +356,35 @@ export const LoginScreen: React.FC = () => {
               ) : mode === 'login' ? (
                 <>
                   <LogIn className="w-4 h-4" />
-                  <span>Entrar com Conta Firebase</span>
+                  <span>Entrar</span>
                 </>
               ) : (
                 <>
                   <UserPlus className="w-4 h-4" />
-                  <span>Criar Conta Firebase</span>
+                  <span>Criar Conta</span>
                 </>
               )}
             </button>
           </form>
 
           {/* Quick toggle at bottom */}
-          <div className="mt-3 text-center">
+          <div className="mt-4 text-center">
             <button
               type="button"
               onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
-              className="text-xs text-indigo-400 hover:text-indigo-300 transition cursor-pointer"
+              className="text-xs text-indigo-400 hover:text-indigo-300 transition cursor-pointer font-medium"
             >
               {mode === 'login'
-                ? 'Não tem conta? Cadastrar no Firebase'
+                ? 'Não tem conta? Cadastrar'
                 : 'Já possui uma conta? Fazer login'}
             </button>
-          </div>
-
-          {/* Production & Security badge */}
-          <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Autenticação direta via Firebase Auth</span>
-            <span className="text-slate-600">&bull;</span>
-            <span className="flex items-center gap-1 text-amber-400">
-              <Flame className="w-3 h-3" /> Produção
-            </span>
           </div>
         </div>
       </div>
 
       {/* Footer */}
       <footer className="text-center text-xs text-slate-500 py-2">
-        <p>Lembrete Inteligente PWA &bull; Isolamento Multi-Conta</p>
+        <p>Lembrete Inteligente &bull; Agenda de Lembretes e Compromissos</p>
       </footer>
     </div>
   );

@@ -49,8 +49,8 @@ function MainApp() {
       {/* Footer / Mobile Safe Area */}
       <footer className="w-full max-w-2xl mx-auto px-4 py-6 text-center text-xs text-slate-500 border-t border-slate-900 mt-auto">
         <p className="flex items-center justify-center gap-1.5 font-medium">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          Lembrete Inteligente &bull; Autenticação Firebase &bull; Firebase Cloud
+          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          Lembrete Inteligente &bull; Agenda de Lembretes e Compromissos
         </p>
       </footer>
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, LogOut, Flame, CalendarCheck } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, CalendarCheck } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -29,16 +29,7 @@ export const Header: React.FC = () => {
                 <h1 className="text-base font-black tracking-tight text-white">
                   Lembrete <span className="text-indigo-400">Inteligente</span>
                 </h1>
-                <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Agenda Conectada
-                </span>
               </div>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1">
-                <Flame className="w-3 h-3 text-amber-400" />
-                <span>Firebase Cloud</span>
-                <span className="text-slate-600">&bull;</span>
-                <span className="text-emerald-400 font-medium">Conta Isolada</span>
-              </p>
             </div>
           </div>
 
