@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Bell, BellRing, Volume2, CheckCircle2, AlertTriangle, ExternalLink, Sparkles, ShieldCheck } from 'lucide-react';
+import { X, Bell, BellRing, Volume2, CheckCircle2, AlertTriangle, ExternalLink, ShieldCheck } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { soundAlert } from '../utils/audioAlert';
 
@@ -12,8 +12,6 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
   const [isRequesting, setIsRequesting] = useState(false);
   const [testSentMessage, setTestSentMessage] = useState<string | null>(null);
 
-  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
-
   const handleRequest = async () => {
     setIsRequesting(true);
     setTestSentMessage(null);
@@ -25,25 +23,13 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
       } else {
         const cur = refreshPermissionState();
         if (cur === 'denied') {
-          setTestSentMessage('O navegador indica que as notificações estão bloqueadas nas opções do site. Veja as instruções abaixo.');
+          setTestSentMessage('Permissão bloqueada no navegador. Abra em aba dedicada ou permita no cadeado da URL.');
         } else {
-          setTestSentMessage('Solicitação encerrada pelo navegador. Toque no botão para tentar novamente.');
+          setTestSentMessage('Solicitação cancelada ou pendente. Toque novamente para ativar.');
         }
       }
     } finally {
       setIsRequesting(false);
-    }
-  };
-
-  const handleCheckPermissionNow = () => {
-    const current = refreshPermissionState();
-    if (current === 'granted') {
-      soundAlert.playSuccess();
-      setTestSentMessage('Permissão concedida detectada! Notificações agora estão ativas.');
-    } else if (current === 'denied') {
-      setTestSentMessage('O navegador ainda indica "Bloqueado". Verifique as permissões no cadeado ao lado da URL ou abra em aba dedicada.');
-    } else {
-      setTestSentMessage('Permissão pendente. Clique em "Ativar Notificações" para exibir a caixa de diálogo.');
     }
   };
 
@@ -215,73 +201,16 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
           </div>
         )}
 
-        {/* Instructions & Quick actions if permission is denied */}
-        {notificationPermission === 'denied' && (
-          <div className="mt-3 space-y-2.5">
-            {isIframe && (
-              <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200 space-y-2">
-                <p className="font-bold text-white flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                  Visualização Embutida Detectada
-                </p>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  O navegador Chrome não permite notificações dentro de janelas embutidas. Abra o aplicativo em uma aba dedicada inteira para liberar as notificações do sistema:
-                </p>
-                <button
-                  type="button"
-                  onClick={openInNewTab}
-                  className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition cursor-pointer active:scale-95"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Abrir em Nova Aba Dedicada</span>
-                </button>
-              </div>
-            )}
-
-            <div className="p-3.5 rounded-2xl bg-rose-950/30 border border-rose-500/40 text-xs text-rose-200 space-y-2">
-              <p className="font-bold text-white flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                Como desbloquear no navegador:
-              </p>
-              <ol className="list-decimal list-inside text-[11px] space-y-1.5 text-slate-300">
-                <li>Clique no ícone de <strong>cadeado ou configurações</strong> 🔒 ao lado do endereço do site (URL) no topo.</li>
-                <li>Mude a opção <strong>Notificações</strong> para <strong>Permitir</strong>.</li>
-                <li>Toque no botão abaixo para o sistema reconhecer a liberação.</li>
-              </ol>
-              <div className="pt-1 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleCheckPermissionNow}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer active:scale-95 shadow-md shadow-emerald-600/20"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Verificar se já liberei</span>
-                </button>
-                {!isIframe && (
-                  <button
-                    type="button"
-                    onClick={openInNewTab}
-                    className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700 transition cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Nova Aba</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Action Buttons */}
         <div className="mt-5 space-y-2.5">
-          {notificationPermission === 'default' && (
+          {notificationPermission !== 'granted' && (
             <button
               onClick={handleRequest}
               disabled={isRequesting}
               className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition cursor-pointer"
             >
               <Bell className="w-4 h-4" />
-              <span>{isRequesting ? 'Solicitando...' : 'Ativar Permissão de Notificações Agora'}</span>
+              <span>{isRequesting ? 'Solicitando...' : 'Ativar Permissão de Notificações'}</span>
             </button>
           )}
 
