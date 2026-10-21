@@ -23,7 +23,6 @@ export const LoginScreen: React.FC = () => {
     resetPassword,
     authError,
     clearAuthError,
-    recentEmails,
   } = useUser();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -227,33 +226,6 @@ export const LoginScreen: React.FC = () => {
             </div>
           )}
 
-          {/* Recent Accounts Quick Select Chips */}
-          {recentEmails.length > 0 && (
-            <div className="mb-3.5 p-2.5 rounded-2xl bg-slate-800/70 border border-slate-700/60 text-left">
-              <span className="text-[10px] font-bold text-slate-400 block mb-1.5">
-                Contas conhecidas neste dispositivo:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {recentEmails.map((em) => (
-                  <button
-                    key={em}
-                    type="button"
-                    onClick={() => {
-                      setEmail(em);
-                      clearAuthError();
-                    }}
-                    className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition cursor-pointer border ${
-                      email.toLowerCase() === em.toLowerCase()
-                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold'
-                        : 'bg-slate-700/50 hover:bg-slate-700 border-slate-600 text-slate-300'
-                    }`}
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Firebase Email & Password Form */}
           <form onSubmit={handleSubmit} className="space-y-3">
