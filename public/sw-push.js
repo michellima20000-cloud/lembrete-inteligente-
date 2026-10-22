@@ -35,8 +35,8 @@ self.addEventListener('push', (event) => {
     tag: data.tag || data.reminderId || 'alarm',
     renotify: true,
     requireInteraction: true, // Keep notification visible on screen/lockscreen until dismissed
-    silent: false,
-    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    silent: false, // Trigger native sound channel
+    vibrate: [600, 200, 600, 200, 600, 200, 800], // Aggressive vibration pattern
     data: {
       url: data.url || (data.reminderId ? `/?alarm_reminder_id=${data.reminderId}` : '/'),
       reminderId: data.reminderId,
@@ -71,14 +71,49 @@ self.addEventListener('notificationclick', (event) => {
   const reminderId = event.notification.data?.reminderId;
   const targetUrl = event.notification.data?.url || (reminderId ? `/?alarm_reminder_id=${reminderId}` : '/');
 
+  // Handle direct Snooze action from lock screen / notification drawer
+  if (event.action === 'snooze' && reminderId) {
+    event.waitUntil(
+      (async () => {
+        try {
+          await fetch(`/api/reminders/${reminderId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adiar_minutos: 10 }),
+          });
+        } catch (e) {}
+
+        const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of clientList) {
+          client.postMessage({
+            type: 'ALARM_SNOOZED',
+            reminderId: reminderId,
+          });
+        }
+
+        await self.registration.showNotification('⏰ Lembrete Adiado', {
+          body: 'O alarme tocará novamente em 10 minutos.',
+          icon: '/icon-192.png',
+          tag: 'snooze_' + reminderId,
+          silent: true,
+        });
+      })()
+    );
+    return;
+  }
+
+  // Open or focus application window
   event.waitUntil(
     (async () => {
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
 
-      // Focus existing window if open
+      // Focus existing window if open and navigate to alarm if needed
       for (const client of clientList) {
         if ('focus' in client) {
           await client.focus();
+          if ('navigate' in client && targetUrl) {
+            client.navigate(targetUrl).catch(() => {});
+          }
           client.postMessage({
             type: 'TRIGGER_ALARM',
             reminderId: reminderId,

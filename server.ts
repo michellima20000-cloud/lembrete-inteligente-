@@ -75,6 +75,42 @@ const userLembretes = new Map<string, Lembrete[]>();
 const userProfiles = new Map<string, UserProfile>();
 const userPushSubscriptions = new Map<string, webpush.PushSubscription[]>();
 
+// Persistent Cache for push subscriptions and reminders across server restarts
+const DATA_CACHE_FILE = path.join(__dirname, '.push-data-cache.json');
+
+function loadCache() {
+  try {
+    if (fs.existsSync(DATA_CACHE_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DATA_CACHE_FILE, 'utf-8'));
+      if (parsed.userPushSubscriptions) {
+        for (const [k, v] of Object.entries(parsed.userPushSubscriptions)) {
+          userPushSubscriptions.set(k, v as webpush.PushSubscription[]);
+        }
+      }
+      if (parsed.userLembretes) {
+        for (const [k, v] of Object.entries(parsed.userLembretes)) {
+          userLembretes.set(k, v as Lembrete[]);
+        }
+      }
+      console.log(`[Cache] Dados restaurados do cache persistente para ${userPushSubscriptions.size} usuário(s) push.`);
+    }
+  } catch (e) {
+    console.warn('[Cache] Falha ao carregar cache de dados:', e);
+  }
+}
+
+function saveCache() {
+  try {
+    const data = {
+      userPushSubscriptions: Object.fromEntries(userPushSubscriptions.entries()),
+      userLembretes: Object.fromEntries(userLembretes.entries()),
+    };
+    fs.writeFileSync(DATA_CACHE_FILE, JSON.stringify(data, null, 2));
+  } catch {}
+}
+
+loadCache();
+
 // API: Get or Sync User Profile
 app.get('/api/users', (req: Request, res: Response) => {
   const userId = (req.query.user_id as string) || (req.headers['x-user-id'] as string);
@@ -157,6 +193,7 @@ app.post('/api/reminders', (req: Request, res: Response) => {
   const list = userLembretes.get(user_id) || [];
   list.push(newReminder);
   userLembretes.set(user_id, list);
+  saveCache();
 
   res.json({
     status: 'sucesso',
@@ -210,6 +247,7 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
 
   list[index] = item;
   userLembretes.set(userId, list);
+  saveCache();
 
   res.json({
     status: 'sucesso',
@@ -233,6 +271,7 @@ app.delete('/api/reminders/:id', (req: Request, res: Response) => {
   const list = userLembretes.get(userId) || [];
   const filtered = list.filter((item) => item.id !== id);
   userLembretes.set(userId, filtered);
+  saveCache();
 
   res.json({
     status: 'sucesso',
@@ -295,6 +334,7 @@ app.post('/api/lembrete/parse', (req: Request, res: Response) => {
   const userItems = userLembretes.get(user_id) || [];
   userItems.push(newReminder);
   userLembretes.set(user_id, userItems);
+  saveCache();
 
   return res.json({
     status: 'sucesso',
@@ -404,6 +444,7 @@ app.post('/api/push/subscribe', (req: Request, res: Response) => {
   const filtered = existing.filter((s) => s.endpoint !== subscription.endpoint);
   filtered.push(subscription);
   userPushSubscriptions.set(user_id, filtered);
+  saveCache();
 
   console.log(`[WebPush] Inscrição salva para usuário ${user_id}. Dispositivos registrados: ${filtered.length}`);
   return res.json({
@@ -419,6 +460,7 @@ app.post('/api/push/unsubscribe', (req: Request, res: Response) => {
     const existing = userPushSubscriptions.get(user_id) || [];
     const filtered = existing.filter((s) => s.endpoint !== endpoint);
     userPushSubscriptions.set(user_id, filtered);
+    saveCache();
   }
   return res.json({ status: 'sucesso' });
 });
@@ -481,6 +523,7 @@ app.post('/api/reminders/sync', (req: Request, res: Response) => {
   }
 
   userLembretes.set(user_id, lembretes);
+  saveCache();
   return res.json({ status: 'sucesso', count: lembretes.length });
 });
 
@@ -500,13 +543,18 @@ setInterval(async () => {
 
       // Conversão resiliente e neutra da data/hora ISO ignorando distorções de fuso horário entre o servidor (UTC) e o celular do usuário (Brasil)
       let execTime = 0;
-      const rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
-      if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
-        execTime = new Date(rawIso).getTime();
-      } else if (rawIso) {
-        // Strings locais sem fuso (ex: "2026-10-22T14:30:00") são normalizadas para o horário local brasileiro (-03:00)
-        const brasiliaParsed = new Date(`${rawIso}-03:00`).getTime();
-        execTime = !isNaN(brasiliaParsed) ? brasiliaParsed : new Date(rawIso).getTime();
+      let rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
+      if (rawIso) {
+        if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
+          execTime = new Date(rawIso).getTime();
+        } else {
+          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(rawIso)) {
+            rawIso += ':00';
+          }
+          // Normaliza strings de horário local para o fuso brasileiro (-03:00)
+          const brasiliaParsed = new Date(`${rawIso}-03:00`).getTime();
+          execTime = !isNaN(brasiliaParsed) ? brasiliaParsed : new Date(rawIso).getTime();
+        }
       }
 
       const antMin = reminder.antecedencia_minutos || 0;

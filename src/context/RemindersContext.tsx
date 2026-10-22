@@ -68,15 +68,21 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     pushManager.getExistingSubscription().then((sub) => {
       setIsPushSubscribed(!!sub);
-      if (sub && currentUser?.id) {
-        fetch('/api/push/subscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: currentUser.id,
-            subscription: sub.toJSON(),
-          }),
-        }).catch(() => {});
+      if (currentUser?.id) {
+        if (sub) {
+          fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: currentUser.id,
+              subscription: sub.toJSON(),
+            }),
+          }).catch(() => {});
+        } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          pushManager.subscribeToPush(currentUser.id).then((res) => {
+            if (res.success) setIsPushSubscribed(true);
+          }).catch(() => {});
+        }
       }
     });
 
@@ -123,6 +129,9 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
+      if (permission === 'granted' && currentUser?.id) {
+        subscribePush().catch(() => {});
+      }
       return permission === 'granted';
     } catch (e) {
       console.warn('Could not request notification permission:', e);
@@ -204,6 +213,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           );
           setReminders(verified);
           saveLocalPartition(currentUser.id, verified);
+          pushManager.syncReminders(currentUser.id, verified);
         }
       }
     } catch (e) {
@@ -446,6 +456,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const updated = prev.map((item) => (item.id === id ? updatedItem : item));
         updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
         saveLocalPartition(currentUser.id, updated);
+        pushManager.syncReminders(currentUser.id, updated);
         return updated;
       });
       soundAlert.playSuccess();
@@ -490,6 +501,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const updated = prev.map((item) => (item.id === id ? { ...item, status_tarefa: status } : item));
       updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
       saveLocalPartition(currentUser.id, updated);
+      pushManager.syncReminders(currentUser.id, updated);
       return updated;
     });
 
@@ -518,6 +530,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setReminders((prev) => {
       const updated = prev.filter((item) => item.id !== id);
       saveLocalPartition(currentUser.id, updated);
+      pushManager.syncReminders(currentUser.id, updated);
       return updated;
     });
 
@@ -635,6 +648,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
           updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
           saveLocalPartition(effectiveUserId, updated);
+          pushManager.syncReminders(effectiveUserId, updated);
           return updated;
         });
       }
