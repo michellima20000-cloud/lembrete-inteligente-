@@ -333,33 +333,35 @@ app.post('/api/transcribe', async (req: Request, res: Response) => {
     };
 
     let transcript = '';
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-transcribe',
-        contents: {
-          parts: [
-            audioPart,
-            {
-              text: 'Transcreva todo o áudio falado com máxima fidelidade em Português do Brasil (pt-BR). Retorne SOMENTE as palavras faladas exatas, sem aspas adicionais, sem preâmbulos, sem suposições e sem formatação markdown.',
-            },
-          ],
-        },
-      });
-      transcript = response.text ? response.text.trim() : '';
-    } catch (modelErr) {
-      console.warn('Fallback para gemini-3.8-flash na transcrição de áudio:', modelErr);
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: {
-          parts: [
-            audioPart,
-            {
-              text: 'Transcreva com fidelidade absoluta o que foi falado neste áudio em Português do Brasil. Retorne apenas o texto transcrito.',
-            },
-          ],
-        },
-      });
-      transcript = fallbackResponse.text ? fallbackResponse.text.trim() : '';
+    const modelsToTry = ['gemini-3.5-transcribe', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: {
+            parts: [
+              audioPart,
+              {
+                text: 'Transcreva todo o áudio falado com máxima fidelidade em Português do Brasil (pt-BR). Retorne SOMENTE as palavras faladas exatas, sem aspas adicionais, sem preâmbulos, sem pontuações artificiais e sem explicações.',
+              },
+            ],
+          },
+        });
+        const resText = response.text ? response.text.trim() : '';
+        if (resText) {
+          transcript = resText;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Transcription] Model ${modelName} failed, trying next:`, err?.message || err);
+      }
+    }
+
+    if (!transcript && lastError) {
+      throw lastError;
     }
 
     // Clean any unwanted surrounding quotation marks

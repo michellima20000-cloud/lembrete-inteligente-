@@ -1,4 +1,4 @@
-import type { Lembrete, StatusTarefa } from '../types/index.ts';
+import type { StatusTarefa } from '../types/index.ts';
 
 export interface ParseReminderInput {
   texto: string;
@@ -69,6 +69,7 @@ export function formatTranscriptPretty(raw: string): string {
     medica: 'médica',
     farmacia: 'farmácia',
     amanha: 'amanhã',
+    manha: 'manhã',
     reuniao: 'reunião',
     reunioes: 'reuniões',
     relatorio: 'relatório',
@@ -146,7 +147,7 @@ export function formatTranscriptPretty(raw: string): string {
 
 /**
  * Normalizes spoken Portuguese numbers, colloquial times, and relative phrases
- * into crisp, standardized time formats.
+ * into crisp, standardized time formats without destroying day period context.
  */
 export function normalizeSpokenPortugueseNumbers(raw: string): string {
   if (!raw) return '';
@@ -197,50 +198,43 @@ export function normalizeSpokenPortugueseNumbers(raw: string): string {
     }
   }
 
-  // Afternoon hours with explicit marker
-  const afternoonHours: Record<string, string> = {
-    'uma': '13:00', 'um': '13:00', '1': '13:00',
-    'duas': '14:00', 'dois': '14:00', '2': '14:00',
-    'três': '15:00', 'tres': '15:00', '3': '15:00',
-    'quatro': '16:00', '4': '16:00',
-    'cinco': '17:00', '5': '17:00',
-    'seis': '18:00', '6': '18:00',
+  // Convert spoken compound hour and minutes: "oito e quinze" -> "8:15", "duas e meia" -> "2:30"
+  const hourWords: Record<string, string> = {
+    'uma': '1', 'um': '1', 'duas': '2', 'dois': '2', 'três': '3', 'tres': '3',
+    'quatro': '4', 'cinco': '5', 'seis': '6', 'sete': '7', 'oito': '8',
+    'nove': '9', 'dez': '10', 'onze': '11', 'doze': '12',
   };
-  for (const [w, repl] of Object.entries(afternoonHours)) {
-    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da tarde|pela tarde|de tarde)`, 'gi'), ` às ${repl} `);
+
+  const minWords: Record<string, string> = {
+    'cinquenta e cinco': '55',
+    'cinquenta': '50',
+    'quarenta e cinco': '45',
+    'quarenta': '40',
+    'trinta e cinco': '35',
+    'trinta': '30',
+    'vinte e cinco': '25',
+    'vinte': '20',
+    'quinze': '15',
+    'dez': '10',
+    'cinco': '5',
+    'meia': '30',
+  };
+
+  // 1. Convert compound hour + minute: 'oito e quinze' -> '8:15'
+  for (const [hW, hNum] of Object.entries(hourWords)) {
+    for (const [mW, mNum] of Object.entries(minWords)) {
+      const p = new RegExp(`\\b${hW}\\s*(?:horas?)?\\s*e\\s*${mW}\\b`, 'gi');
+      text = text.replace(p, ` ${hNum}:${String(mNum).padStart(2, '0')} `);
+    }
   }
 
-  // Evening hours
-  const eveningHours: Record<string, string> = {
-    'sete': '19:00', '7': '19:00',
-    'oito': '20:00', '8': '20:00',
-    'nove': '21:00', '9': '21:00',
-    'dez': '22:00', '10': '22:00',
-    'onze': '23:00', '11': '23:00',
-  };
-  for (const [w, repl] of Object.entries(eveningHours)) {
-    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da noite|pela noite|de noite)`, 'gi'), ` às ${repl} `);
+  // 2. Convert standalone hour word before day period: 'oito da manhã' -> '8 da manhã'
+  for (const [hW, hNum] of Object.entries(hourWords)) {
+    const p = new RegExp(`\\b${hW}\\s*(?=(?:da|de|pela)\\s+(?:manh[ãa]|tarde|noite|madrugada))`, 'gi');
+    text = text.replace(p, ` ${hNum} `);
   }
 
-  // Morning hours
-  const morningHours: Record<string, string> = {
-    'uma': '01:00', 'um': '01:00', '1': '01:00',
-    'duas': '02:00', 'dois': '02:00', '2': '02:00',
-    'três': '03:00', 'tres': '03:00', '3': '03:00',
-    'quatro': '04:00', '4': '04:00',
-    'cinco': '05:00', '5': '05:00',
-    'seis': '06:00', '6': '06:00',
-    'sete': '07:00', '7': '07:00',
-    'oito': '08:00', '8': '08:00',
-    'nove': '09:00', '9': '09:00',
-    'dez': '10:00', '10': '10:00',
-    'onze': '11:00', '11': '11:00',
-  };
-  for (const [w, repl] of Object.entries(morningHours)) {
-    text = text.replace(new RegExp(`(?:às|as)?\\s*\\b${w}\\b\\s*(?:da manhã|pela manhã|de manhã)`, 'gi'), ` às ${repl} `);
-  }
-
-  // Spoken Portuguese compound and single numbers
+  // 3. Convert numbers in generic time context: "às X", "X horas", "X minutos"
   const wordNumbers: Record<string, string> = {
     'cinquenta e cinco': '55',
     'cinquenta': '50',
@@ -275,13 +269,21 @@ export function normalizeSpokenPortugueseNumbers(raw: string): string {
     'dezenove': '19',
   };
 
-  // Convert numbers in "às X" context
   for (const [w, num] of Object.entries(wordNumbers)) {
     text = text.replace(new RegExp(`(?<=\\b(?:às|as|pras|para\\s+as|para\\s+às)\\s+)${w}\\b`, 'gi'), num);
     text = text.replace(new RegExp(`\\b${w}\\s*(?=horas?\\b)`, 'gi'), num);
     text = text.replace(new RegExp(`(?<=\\b(?:em|daqui\\s+a)\\s+)${w}\\s*(?=minutos?|min\\b)`, 'gi'), num);
     text = text.replace(new RegExp(`(?<=\\b(?:às|as|pras)\\s+\\d{1,2}\\s+e\\s+)${w}\\b`, 'gi'), num);
   }
+
+  // Handle "X e meia" -> "X:30"
+  text = text.replace(/\b(\d{1,2})\s*e\s*meia\b/gi, '$1:30');
+
+  // Handle "X e Y" -> "X:Y" (e.g. "8 e 15" -> "8:15")
+  text = text.replace(/\b(\d{1,2})\s*(?:horas?)?\s*e\s*(\d{1,2})\b/gi, (_match, h, m) => {
+    const padM = String(m).padStart(2, '0');
+    return `${h}:${padM}`;
+  });
 
   return text.trim();
 }
@@ -301,7 +303,11 @@ export function isOnlyTemporalQuery(raw: string): boolean {
     .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*\d+\s*(?:minutos?|min|horas?|h)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
     .replace(/(?:^|[^\w\u00C0-\u017F])(?:daqui\s*a|em)\s*meia\s*hora(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
     .replace(/(?:^|[^\w\u00C0-\u017F])(?:com|avise|avisar)?\s*\d+\s*(?:minutos?|min)\s*(?:de\s*anteced[êe]ncia|antes)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
-    .replace(/(?:^|[^\w\u00C0-\u017F])(?:de\s+manh[ãa]|pela\s+manh[ãa]|cedo|à\s+tarde|a\s+tarde|pela\s+tarde|à\s+noite|a\s+noite|pela\s+noite)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:(?:da|de|pela)\s+manh[ãa]|cedo|matutin[ao])(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:(?:da|de|pela|[àa])\s+tarde|vespertin[ao])(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:(?:da|de|pela|[àa])\s+noite|noturn[ao])(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:(?:da|de|pela)\s+madrugada)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
+    .replace(/(?:^|[^\w\u00C0-\u017F])(?:meio[- ]dia|meia[- ]noite)(?=[^\w\u00C0-\u017F]|$)/gi, ' ')
     .replace(/\s+/g, '')
     .trim();
 
@@ -325,7 +331,7 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
         status_tarefa: 'pendente',
       },
       mensagem_sistema:
-        'Por favor, informe também a tarefa do lembrete (ex: "hoje às 15h tomar remédio" ou "comprar pão hoje às 18h").',
+        'Por favor, informe também a tarefa do lembrete (ex: "8:15 da manhã tomar remédio" ou "comprar pão às 18h").',
     };
   }
 
@@ -371,6 +377,12 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   const isTomorrow = !isAfterTomorrow && /(?:^|[^\w\u00C0-\u017F])amanh[ãa](?:[^\w\u00C0-\u017F]|$)/i.test(text);
   const isToday = /(?:^|[^\w\u00C0-\u017F])hoje(?:[^\w\u00C0-\u017F]|$)/i.test(text);
 
+  // Explicit period markers (Brazilian Portuguese)
+  const isMorning = /(?:^|[^\w\u00C0-\u017F])(?:da\s+manh[ãa]|de\s+manh[ãa]|pela\s+manh[ãa]|cedo|matutin[ao])(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isAfternoon = /(?:^|[^\w\u00C0-\u017F])(?:da\s+tarde|de\s+tarde|pela\s+tarde|[àa]\s+tarde|vespertin[ao])(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isNight = /(?:^|[^\w\u00C0-\u017F])(?:da\s+noite|de\s+noite|pela\s+noite|[àa]\s+noite|noturn[ao])(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isDawn = /(?:^|[^\w\u00C0-\u017F])(?:da\s+madrugada|de\s+madrugada|pela\s+madrugada)(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+
   if (minMatch) {
     target = new Date(target.getTime() + parseInt(minMatch[1], 10) * 60000);
   } else if (halfHourMatch) {
@@ -384,7 +396,7 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
     } else if (isTomorrow) {
       target.setDate(target.getDate() + 1);
     } else if (isToday) {
-      // Stays explicitly TODAY
+      // Stays initially today
     } else {
       // Check weekday names
       const weekDays: Record<string, number> = {
@@ -433,72 +445,99 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
       }
     }
 
-    // 4. Specific Time
-    const halfPastMatch = text.match(/(?:às|as|pras|para\s+as)?\s*(\d{1,2})\s*e\s*meia(?:[^\w\u00C0-\u017F]|$)/i);
-    const hourAndMinuteMatch = text.match(/(?:às|as|pras|para\s*as|para\s*às)\s*(\d{1,2})\s*e\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
-    const timeColonOrHMatch = text.match(/(?:às|as|pras|para\s*as|para\s*às)?\s*(\d{1,2})(?:h|:)(\d{2})?(?:[^\w\u00C0-\u017F]|$)/i);
+    // 4. Specific Hour and Minute Extraction
+    // Match colon format: "8:15", "08:15", "15:30"
+    const timeColonMatch = text.match(/(?:às|as|pras|para\s*(?:as|às))?\s*(\d{1,2}):(\d{2})(?:[^\w\u00C0-\u017F]|$)/i);
+    // Match H format: "8h15", "8h", "15h"
+    const timeHMatch = text.match(/(?:às|as|pras|para\s*(?:as|às))?\s*(\d{1,2})h(\d{2})?(?:[^\w\u00C0-\u017F]|$)/i);
+    // Match "X e meia": "8 e meia"
+    const halfPastMatch = text.match(/(?:às|as|pras|para\s*(?:as|às))?\s*(\d{1,2})\s*e\s*meia(?:[^\w\u00C0-\u017F]|$)/i);
+    // Match "X e Y": "8 e 15", "8 horas e 15"
+    const hourAndMinuteMatch = text.match(/(?:às|as|pras|para\s*(?:as|às))?\s*(\d{1,2})\s*(?:horas?)?\s*e\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
+    // Match Hour Only: "8 horas", "às 8", "às 8h"
     const hourOnlyMatch =
       text.match(/(\d{1,2})\s*horas?(?:[^\w\u00C0-\u017F]|$)/i) ||
-      text.match(/(?:às|as|pras|para\s*as|para\s*às)\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
+      text.match(/(?:às|as|pras|para\s*(?:as|às))\s*(\d{1,2})(?:[^\w\u00C0-\u017F]|$)/i);
 
-    if (halfPastMatch) {
-      let h = parseInt(halfPastMatch[1], 10);
-      if (h >= 1 && h <= 11 && (text.includes('tarde') || text.includes('noite') || (isToday && h < ref.getHours()))) {
-        h += 12;
-      }
-      target.setHours(h, 30, 0, 0);
+    let parsedHour: number | null = null;
+    let parsedMinute = 0;
+
+    if (timeColonMatch) {
+      parsedHour = parseInt(timeColonMatch[1], 10);
+      parsedMinute = parseInt(timeColonMatch[2], 10);
+    } else if (timeHMatch) {
+      parsedHour = parseInt(timeHMatch[1], 10);
+      parsedMinute = timeHMatch[2] ? parseInt(timeHMatch[2], 10) : 0;
     } else if (hourAndMinuteMatch) {
-      let h = parseInt(hourAndMinuteMatch[1], 10);
-      const m = parseInt(hourAndMinuteMatch[2], 10);
-      if (h >= 1 && h <= 11 && (text.includes('tarde') || text.includes('noite') || (isToday && h < ref.getHours()))) {
-        h += 12;
-      }
-      target.setHours(h, m, 0, 0);
-    } else if (timeColonOrHMatch) {
-      let hours = parseInt(timeColonOrHMatch[1], 10);
-      const minutes = timeColonOrHMatch[2] ? parseInt(timeColonOrHMatch[2], 10) : 0;
-      if (hours >= 1 && hours <= 11 && (text.includes('tarde') || text.includes('noite') || (isToday && hours < ref.getHours() && !text.includes('manhã')))) {
-        hours += 12;
-      }
-      target.setHours(hours, minutes, 0, 0);
+      parsedHour = parseInt(hourAndMinuteMatch[1], 10);
+      parsedMinute = parseInt(hourAndMinuteMatch[2], 10);
+    } else if (halfPastMatch) {
+      parsedHour = parseInt(halfPastMatch[1], 10);
+      parsedMinute = 30;
     } else if (hourOnlyMatch) {
-      let hours = parseInt(hourOnlyMatch[1], 10);
-      if (hours >= 1 && hours <= 11 && (text.includes('tarde') || text.includes('noite') || (isToday && hours < ref.getHours() && !text.includes('manhã')))) {
-        hours += 12;
+      parsedHour = parseInt(hourOnlyMatch[1] || hourOnlyMatch[2], 10);
+      parsedMinute = 0;
+    }
+
+    // Apply Explicit Period or Default Rule with 100% Precision
+    if (parsedHour !== null) {
+      let finalHour = parsedHour;
+      const finalMinute = Math.min(59, Math.max(0, parsedMinute));
+
+      if (isMorning || isDawn) {
+        // EXPLICITLY MORNING / DAWN: Hours 1 to 11 remain morning hours!
+        // E.g. "8:15 da manhã" -> 08:15. NEVER ADD 12! NEVER CONVERT TO NIGHT!
+        if (finalHour >= 12 && finalHour <= 23 && isMorning) {
+          finalHour = finalHour - 12; // E.g. typo "20h da manhã" -> 08:00
+        }
+      } else if (isAfternoon) {
+        // EXPLICITLY AFTERNOON: Hours 1 to 11 convert to afternoon (13 to 23)
+        // E.g. "3 da tarde" -> 15:00, "1:30 da tarde" -> 13:30, "14h da tarde" -> 14:00
+        if (finalHour >= 1 && finalHour <= 11) {
+          finalHour += 12;
+        }
+      } else if (isNight) {
+        // EXPLICITLY NIGHT: Hours 1 to 11 convert to night (13 to 23)
+        // E.g. "8 da noite" -> 20:00, "8:15 da noite" -> 20:15
+        if (finalHour >= 1 && finalHour <= 11) {
+          finalHour += 12;
+        } else if (finalHour === 12) {
+          finalHour = 0; // 12 da noite = 00:00 (meia-noite)
+        }
+      } else {
+        // NO PERIOD SPECIFIED:
+        // In colloquial Brazilian Portuguese, hours 1 to 6 without marker usually mean afternoon (13..18)
+        if (finalHour >= 1 && finalHour <= 6) {
+          finalHour += 12;
+        }
+        // Hours 7 to 11 are morning hours (07:00..11:00)
+        // Hours 12 to 23 are already 24-hour afternoon/evening
       }
-      target.setHours(hours, 0, 0, 0);
+
+      target.setHours(finalHour, finalMinute, 0, 0);
+
+      // PRESERVE THE REQUESTED TIME: If the requested time has already passed today,
+      // schedule for TOMORROW at the EXACT SAME requested time!
+      // Do NOT arbitrarily advance the hour by +12 or invent an unrelated time!
+      if (target.getTime() <= ref.getTime()) {
+        target.setDate(target.getDate() + 1);
+      }
     } else {
-      // Default time periods if no explicit hour given
-      if (text.includes('de manhã') || text.includes('pela manhã') || text.includes('cedo')) {
-        target.setHours(9, 0, 0, 0);
-      } else if (text.includes('à tarde') || text.includes('a tarde') || text.includes('pela tarde')) {
+      // Default time periods if no explicit hour was specified at all
+      if (isMorning) {
+        target.setHours(8, 0, 0, 0);
+      } else if (isAfternoon) {
         target.setHours(14, 0, 0, 0);
-      } else if (text.includes('no fim da tarde') || text.includes('entardecer')) {
-        target.setHours(18, 0, 0, 0);
-      } else if (text.includes('à noite') || text.includes('a noite') || text.includes('pela noite')) {
+      } else if (isNight) {
         target.setHours(20, 0, 0, 0);
       } else if (isTomorrow || isAfterTomorrow) {
         target.setHours(9, 0, 0, 0);
-      } else if (isToday) {
-        // Today with no explicit hour: default to 1 hour from now
-        target = new Date(ref.getTime() + 60 * 60 * 1000);
       } else {
+        // Default to 1 hour from now
         target = new Date(ref.getTime() + 60 * 60 * 1000);
       }
-    }
 
-    // Safety check: if target time is in the past for today or unspecified day, advance or adjust
-    if (target.getTime() <= ref.getTime()) {
-      if (isToday) {
-        // If hour has already passed today, try evening hour (e.g. 10 -> 22) or set 30 min from now
-        if (target.getHours() < 12 && target.getHours() + 12 > ref.getHours()) {
-          target.setHours(target.getHours() + 12);
-        } else {
-          // If already past, schedule for 30 minutes from now today
-          target = new Date(ref.getTime() + 30 * 60 * 1000);
-        }
-      } else if (!isTomorrow && !isAfterTomorrow) {
-        // If no day was specified and time passed today, advance to tomorrow
+      if (target.getTime() <= ref.getTime()) {
         target.setDate(target.getDate() + 1);
       }
     }
@@ -511,18 +550,24 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   cleanedTitle = cleanedTitle.replace(wordBound('(?:por\\s+favor\\s*,?\\s*)?(?:me\\s+)?(?:lembre|lembrar|avise|avisar|agendar|anotar|não\\s+esquecer|nao\\s+esquecer|criar\\s+lembrete|marcar)(?:\\s+(?:de|para|que|o|a))?'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:daqui\\s*a|em)\\s*\\d+\\s*(?:minutos?|min|horas?|h)'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:daqui\\s*a|em)\\s*meia\\s*hora'), ' ');
-  cleanedTitle = cleanedTitle.replace(wordBound('(?:com|avise|avisar)?\\s*\\d+\\s*(?:minutos?|min)\\s*(?:de\\s*anteced[êe]ncia|antes)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:com|avise|avisar)?\\s*\\d+\\s*(?:minutos?|min)\\s*(?:de\s*anteced[êe]ncia|antes)'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:às|as|pras|para\\s*as|para\\s*às)\\s*\\d{1,2}(?:\\s*(?:e\\s*(?:\\d{1,2}|meia)|:\\d{2}|h|horas?))?'), ' ');
-  cleanedTitle = cleanedTitle.replace(wordBound('\\d{1,2}\\s*(?:h|horas?|:\\d{2})'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('\\d{1,2}:\\d{2}'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('\\d{1,2}\\s*(?:h|horas?)(?:\\s*\\d{2})?'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:depois\\s+de\\s+amanh[ãa]|amanh[ãa]|hoje)'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:na\\s+|no\\s+|próxim[ao]\\s+)?(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:[ -]feira)?'), ' ');
-  cleanedTitle = cleanedTitle.replace(wordBound('(?:de\\s+manh[ãa]|pela\\s+manh[ãa]|cedo|à\\s+tarde|a\\s+tarde|pela\\s+tarde|à\\s+noite|a\\s+noite|pela\\s+noite)'), ' ');
+  // Thoroughly strip all day period expressions from title
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:da|de|pela)\\s+manh[ãa]|cedo|matutin[ao]'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:da|de|pela|[àa])\\s+tarde|vespertin[ao]'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:da|de|pela|[àa])\\s+noite|noturn[ao]'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:da|de|pela)\\s+madrugada'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('meio[- ]dia|meia[- ]noite'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:dia\\s+)\\d{1,2}'), ' ');
   cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
   // Strip connector words at the beginning or end
   cleanedTitle = cleanedTitle
-    .replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+|com\s+|sobre\s+|às\s+|as\s+|na\s+|no\\s+)/i, '')
+    .replace(/^(?:de\s+|para\s+|que\s+|em\s+|o\s+|a\s+|com\s+|sobre\s+|às\s+|as\s+|na\s+|no\s+)/i, '')
     .replace(/(?:\s+de|\s+para|\s+às|\s+as|\s+na|\s+no)$/i, '')
     .trim();
 
@@ -596,13 +641,24 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   )}T${pad(target.getHours())}:${pad(target.getMinutes())}:${pad(target.getSeconds())}`;
 
   const formattedHour = `${pad(target.getHours())}:${pad(target.getMinutes())}`;
-  const dayDesc = isToday
+
+  const isScheduledForToday =
+    target.getFullYear() === ref.getFullYear() &&
+    target.getMonth() === ref.getMonth() &&
+    target.getDate() === ref.getDate();
+
+  const isScheduledForTomorrow =
+    target.getFullYear() === ref.getFullYear() &&
+    target.getMonth() === ref.getMonth() &&
+    target.getDate() === ref.getDate() + 1;
+
+  const dayDesc = isScheduledForToday
     ? 'hoje'
-    : isTomorrow
+    : isScheduledForTomorrow
     ? 'amanhã'
-    : isAfterTomorrow
-    ? 'depois de amanhã'
     : `${pad(target.getDate())}/${pad(target.getMonth() + 1)}`;
+
+  const periodLabel = target.getHours() < 12 ? 'da manhã' : target.getHours() < 18 ? 'da tarde' : 'da noite';
 
   return {
     status: 'sucesso',
@@ -615,6 +671,6 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
       categoria,
       urgencia,
     },
-    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado com sucesso para ${dayDesc} às ${formattedHour}!`,
+    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado para ${dayDesc} às ${formattedHour} (${periodLabel})!`,
   };
 }
