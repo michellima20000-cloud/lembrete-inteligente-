@@ -24,15 +24,18 @@
         // Fallback if property is non-configurable in some engine
       }
 
-      // Suppress unhandled errors originating from external browser extensions
+      // Suppress unhandled errors originating from external browser extensions or Vite HMR disconnects
       window.addEventListener(
         'error',
         function (event) {
+          const msg = event.message || '';
+          const filename = event.filename || '';
           if (
-            event.filename &&
-            (event.filename.startsWith('chrome-extension://') ||
-              event.filename.startsWith('moz-extension://') ||
-              event.filename.startsWith('safari-web-extension://'))
+            msg.includes('WebSocket') ||
+            filename.includes('@vite/client') ||
+            filename.startsWith('chrome-extension://') ||
+            filename.startsWith('moz-extension://') ||
+            filename.startsWith('safari-web-extension://')
           ) {
             event.preventDefault();
             event.stopImmediatePropagation();
@@ -46,12 +49,13 @@
         'unhandledrejection',
         function (event) {
           const reason = event.reason;
-          const stack = reason && (reason.stack || String(reason));
+          const msg = (reason && (reason.message || reason.stack || String(reason))) || '';
           if (
-            stack &&
-            (stack.includes('chrome-extension://') ||
-              stack.includes('moz-extension://') ||
-              stack.includes('safari-web-extension://'))
+            msg.includes('WebSocket') ||
+            msg.includes('@vite/client') ||
+            msg.includes('chrome-extension://') ||
+            msg.includes('moz-extension://') ||
+            msg.includes('safari-web-extension://')
           ) {
             event.preventDefault();
             event.stopImmediatePropagation();
