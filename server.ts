@@ -448,10 +448,19 @@ app.post('/api/push/test', async (req: Request, res: Response) => {
     url: '/',
   });
 
+  const pushOptions: webpush.RequestOptions = {
+    TTL: 0,
+    urgency: 'high',
+    headers: {
+      Urgency: 'high',
+      TTL: '0',
+    },
+  };
+
   let sentCount = 0;
   for (const sub of subs) {
     try {
-      await webpush.sendNotification(sub, testPayload);
+      await webpush.sendNotification(sub, testPayload, pushOptions);
       sentCount++;
     } catch (e: any) {
       console.warn('[WebPush] Falha ao enviar notificação de teste:', e?.message);
@@ -489,7 +498,17 @@ setInterval(async () => {
     for (const reminder of remindersList) {
       if (reminder.status_tarefa === 'concluído') continue;
 
-      const execTime = new Date(reminder.data_hora_execucao).getTime();
+      // Conversão resiliente e neutra da data/hora ISO ignorando distorções de fuso horário entre o servidor (UTC) e o celular do usuário (Brasil)
+      let execTime = 0;
+      const rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
+      if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
+        execTime = new Date(rawIso).getTime();
+      } else if (rawIso) {
+        // Strings locais sem fuso (ex: "2026-10-22T14:30:00") são normalizadas para o horário local brasileiro (-03:00)
+        const brasiliaParsed = new Date(`${rawIso}-03:00`).getTime();
+        execTime = !isNaN(brasiliaParsed) ? brasiliaParsed : new Date(rawIso).getTime();
+      }
+
       const antMin = reminder.antecedencia_minutos || 0;
       const triggerTime = execTime - antMin * 60 * 1000;
 
@@ -515,10 +534,20 @@ setInterval(async () => {
             url: `/?alarm_reminder_id=${reminder.id}`,
           });
 
+          // Configuração de alta prioridade para acordar smartphones com tela bloqueada
+          const pushOptions: webpush.RequestOptions = {
+            TTL: 0,
+            urgency: 'high',
+            headers: {
+              Urgency: 'high',
+              TTL: '0',
+            },
+          };
+
           const activeSubs: webpush.PushSubscription[] = [];
           for (const sub of subscriptions) {
             try {
-              await webpush.sendNotification(sub, payload);
+              await webpush.sendNotification(sub, payload, pushOptions);
               activeSubs.push(sub);
             } catch (err: any) {
               console.warn('[WebPush] Falha ao enviar alarme push:', err?.statusCode || err?.message);
