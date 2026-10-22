@@ -1,8 +1,11 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import webpush from 'web-push';
+import { GoogleGenAI } from '@google/genai';
 import { parseReminderCommand } from './src/utils/reminderParser.ts';
 
 dotenv.config();
@@ -13,7 +16,38 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
+
+// Initialize persistent VAPID keys for Web Push Notifications
+const VAPID_FILE = path.join(__dirname, '.vapid-keys.json');
+let vapidKeys: { publicKey: string; privateKey: string };
+
+if (fs.existsSync(VAPID_FILE)) {
+  try {
+    vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
+  } catch {
+    vapidKeys = webpush.generateVAPIDKeys();
+    try { fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2)); } catch {}
+  }
+} else {
+  vapidKeys = webpush.generateVAPIDKeys();
+  try { fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2)); } catch {}
+}
+
+webpush.setVapidDetails(
+  'mailto:contato@lembrete-inteligente.app',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
+
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
 
 export interface Lembrete {
   id: string;
@@ -39,6 +73,7 @@ export interface UserProfile {
 // Multi-User Data Store strictly keyed by authenticated user ID (Firebase UID)
 const userLembretes = new Map<string, Lembrete[]>();
 const userProfiles = new Map<string, UserProfile>();
+const userPushSubscriptions = new Map<string, webpush.PushSubscription[]>();
 
 // API: Get or Sync User Profile
 app.get('/api/users', (req: Request, res: Response) => {
@@ -270,6 +305,233 @@ app.post('/api/lembrete/parse', (req: Request, res: Response) => {
     mensagem_sistema: parsedData.mensagem_sistema,
   });
 });
+
+// API: High-Accuracy Multimodal Audio Transcription with Portuguese Speech Optimization
+app.post('/api/transcribe', async (req: Request, res: Response) => {
+  const { audio, mimeType } = req.body;
+
+  if (!audio) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'Nenhum dado de áudio foi recebido para transcrição.',
+    });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({
+      status: 'erro',
+      mensagem: 'Chave GEMINI_API_KEY não configurada no servidor.',
+    });
+  }
+
+  try {
+    const audioPart = {
+      inlineData: {
+        mimeType: mimeType || 'audio/webm',
+        data: audio,
+      },
+    };
+
+    let transcript = '';
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-transcribe',
+        contents: {
+          parts: [
+            audioPart,
+            {
+              text: 'Transcreva todo o áudio falado com máxima fidelidade em Português do Brasil (pt-BR). Retorne SOMENTE as palavras faladas exatas, sem aspas adicionais, sem preâmbulos, sem suposições e sem formatação markdown.',
+            },
+          ],
+        },
+      });
+      transcript = response.text ? response.text.trim() : '';
+    } catch (modelErr) {
+      console.warn('Fallback para gemini-3.8-flash na transcrição de áudio:', modelErr);
+      const fallbackResponse = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: {
+          parts: [
+            audioPart,
+            {
+              text: 'Transcreva com fidelidade absoluta o que foi falado neste áudio em Português do Brasil. Retorne apenas o texto transcrito.',
+            },
+          ],
+        },
+      });
+      transcript = fallbackResponse.text ? fallbackResponse.text.trim() : '';
+    }
+
+    // Clean any unwanted surrounding quotation marks
+    transcript = transcript.replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
+
+    return res.json({
+      status: 'sucesso',
+      transcript,
+    });
+  } catch (err: any) {
+    console.error('Erro na transcrição de áudio:', err);
+    return res.status(500).json({
+      status: 'erro',
+      mensagem: err?.message || 'Falha ao processar e transcrever o áudio.',
+    });
+  }
+});
+
+// ==========================================
+// BACKGROUND WEB PUSH ALARMS ENGINE & ROUTES
+// ==========================================
+
+// 1. Get VAPID Public Key for client subscription
+app.get('/api/push/vapid-public-key', (_req: Request, res: Response) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+// 2. Register / Update Push Subscription for authenticated user
+app.post('/api/push/subscribe', (req: Request, res: Response) => {
+  const { user_id, subscription } = req.body;
+  if (!user_id || !subscription || !subscription.endpoint) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'user_id e subscription válidos são obrigatórios.',
+    });
+  }
+
+  const existing = userPushSubscriptions.get(user_id) || [];
+  // Deduplicate by endpoint to avoid duplicate notifications on same device
+  const filtered = existing.filter((s) => s.endpoint !== subscription.endpoint);
+  filtered.push(subscription);
+  userPushSubscriptions.set(user_id, filtered);
+
+  console.log(`[WebPush] Inscrição salva para usuário ${user_id}. Dispositivos registrados: ${filtered.length}`);
+  return res.json({
+    status: 'sucesso',
+    mensagem: 'Inscrição push salva com sucesso.',
+  });
+});
+
+// 3. Unsubscribe push
+app.post('/api/push/unsubscribe', (req: Request, res: Response) => {
+  const { user_id, endpoint } = req.body;
+  if (user_id && endpoint) {
+    const existing = userPushSubscriptions.get(user_id) || [];
+    const filtered = existing.filter((s) => s.endpoint !== endpoint);
+    userPushSubscriptions.set(user_id, filtered);
+  }
+  return res.json({ status: 'sucesso' });
+});
+
+// 4. Test Background Push Notification
+app.post('/api/push/test', async (req: Request, res: Response) => {
+  const { user_id } = req.body;
+  if (!user_id) {
+    return res.status(400).json({ status: 'erro', mensagem: 'user_id obrigatório.' });
+  }
+
+  const subs = userPushSubscriptions.get(user_id) || [];
+  if (subs.length === 0) {
+    return res.status(404).json({
+      status: 'erro',
+      mensagem: 'Nenhum dispositivo cadastrado para este usuário. Clique em "Ativar Notificações no Celular" primeiro.',
+    });
+  }
+
+  const testPayload = JSON.stringify({
+    title: '⏰ Teste de Alarme: Lembrete Inteligente',
+    body: 'Parabéns! Seus alarmes em segundo plano estão 100% ativos e prontos para disparar no horário!',
+    tag: 'test_' + Date.now(),
+    reminderId: 'test',
+    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    requireInteraction: true,
+    url: '/',
+  });
+
+  let sentCount = 0;
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(sub, testPayload);
+      sentCount++;
+    } catch (e: any) {
+      console.warn('[WebPush] Falha ao enviar notificação de teste:', e?.message);
+    }
+  }
+
+  return res.json({
+    status: 'sucesso',
+    mensagem: `Alarme de teste enviado para ${sentCount} dispositivo(s)!`,
+  });
+});
+
+// 5. Sync active reminders to server store so server scheduler can wake background devices
+app.post('/api/reminders/sync', (req: Request, res: Response) => {
+  const { user_id, lembretes } = req.body;
+  if (!user_id || !Array.isArray(lembretes)) {
+    return res.status(400).json({ status: 'erro', mensagem: 'user_id e lista de lembretes são obrigatórios.' });
+  }
+
+  userLembretes.set(user_id, lembretes);
+  return res.json({ status: 'sucesso', count: lembretes.length });
+});
+
+// 6. SERVER-SIDE BACKGROUND ALARM RUNNER
+// Scans all registered users every 2.5 seconds.
+// Fires real Web Push notifications even if the browser is closed or phone is locked!
+const serverTriggeredReminders = new Set<string>();
+
+setInterval(async () => {
+  const now = Date.now();
+
+  for (const [userId, remindersList] of userLembretes.entries()) {
+    const subscriptions = userPushSubscriptions.get(userId) || [];
+
+    for (const reminder of remindersList) {
+      if (reminder.status_tarefa === 'concluído') continue;
+
+      const execTime = new Date(reminder.data_hora_execucao).getTime();
+      const antMin = reminder.antecedencia_minutos || 0;
+      const triggerTime = execTime - antMin * 60 * 1000;
+
+      // Check if due: now has passed triggerTime and not yet triggered
+      const diff = now - triggerTime;
+      const triggerKey = `${reminder.id}_${reminder.data_hora_execucao}`;
+
+      // Trigger if due (within the past 24 hours) and not yet sent
+      if (diff >= 0 && diff < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(triggerKey)) {
+        serverTriggeredReminders.add(triggerKey);
+        console.log(`[Server Background Alarm] Disparando alarme para: "${reminder.titulo}" (${reminder.id})`);
+
+        if (subscriptions.length > 0) {
+          const payload = JSON.stringify({
+            title: `⏰ ALARME: ${reminder.titulo}`,
+            body: antMin > 0
+              ? `Aviso com ${antMin}m de antecedência para seu compromisso!`
+              : `Chegou o horário do seu compromisso: ${reminder.titulo}!`,
+            tag: reminder.id,
+            reminderId: reminder.id,
+            vibrate: [600, 200, 600, 200, 600, 200, 800],
+            requireInteraction: true,
+            url: `/?alarm_reminder_id=${reminder.id}`,
+          });
+
+          const activeSubs: webpush.PushSubscription[] = [];
+          for (const sub of subscriptions) {
+            try {
+              await webpush.sendNotification(sub, payload);
+              activeSubs.push(sub);
+            } catch (err: any) {
+              console.warn('[WebPush] Falha ao enviar alarme push:', err?.statusCode || err?.message);
+              // Drop expired subscriptions (410 Gone / 404 Not Found)
+              if (err?.statusCode !== 404 && err?.statusCode !== 410) {
+                activeSubs.push(sub);
+              }
+            }
+          }
+          userPushSubscriptions.set(userId, activeSubs);
+        }
+      }
+    }
+  }
+}, 2500);
 
 // Setup Vite middlewares in development or static serve in production
 async function startServer() {
