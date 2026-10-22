@@ -24,11 +24,38 @@
         // Fallback if property is non-configurable in some engine
       }
 
+      // Safeguard for Vite HMR WebSocket in container environment (HMR disabled in AI Studio)
+      try {
+        const NativeWebSocket = window.WebSocket;
+        if (NativeWebSocket) {
+          window.WebSocket = function (url, protocols) {
+            if (protocols === 'vite-hmr' || (typeof url === 'string' && url.includes('token='))) {
+              const target = new EventTarget();
+              target.readyState = 1; // OPEN
+              target.url = url;
+              target.protocol = 'vite-hmr';
+              target.close = () => {};
+              target.send = () => {};
+              setTimeout(() => {
+                try { target.dispatchEvent(new Event('open')); } catch {}
+              }, 0);
+              return target;
+            }
+            return new NativeWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = NativeWebSocket.prototype;
+          window.WebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+          window.WebSocket.OPEN = NativeWebSocket.OPEN;
+          window.WebSocket.CLOSING = NativeWebSocket.CLOSING;
+          window.WebSocket.CLOSED = NativeWebSocket.CLOSED;
+        }
+      } catch (wsErr) {}
+
       // Suppress unhandled errors originating from external browser extensions or Vite HMR disconnects
       window.addEventListener(
         'error',
         function (event) {
-          const msg = event.message || '';
+          const msg = (event.message || (event.error && (event.error.message || event.error.stack)) || '') + '';
           const filename = event.filename || '';
           if (
             msg.includes('WebSocket') ||
