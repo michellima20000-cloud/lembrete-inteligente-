@@ -674,6 +674,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
       updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
       saveLocalPartition(currentUser.id, updated);
+      pushManager.syncReminders(currentUser.id, updated);
       return updated;
     });
 

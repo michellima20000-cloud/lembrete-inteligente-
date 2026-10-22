@@ -35,6 +35,7 @@ self.addEventListener('push', (event) => {
     tag: data.tag || data.reminderId || 'alarm',
     renotify: true,
     requireInteraction: true, // Keep notification visible on screen/lockscreen until dismissed
+    silent: false,
     vibrate: [600, 200, 600, 200, 600, 200, 800],
     data: {
       url: data.url || (data.reminderId ? `/?alarm_reminder_id=${data.reminderId}` : '/'),

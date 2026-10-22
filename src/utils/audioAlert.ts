@@ -454,3 +454,13 @@ class SoundAlertManager {
 }
 
 export const soundAlert = new SoundAlertManager();
+
+// Safety lock: instantly re-activate AudioContext and force full alarm ringing when screen wakes or tab becomes visible
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && soundAlert.getIsRinging()) {
+      soundAlert.startRingingAlarm();
+    }
+  });
+}
+
