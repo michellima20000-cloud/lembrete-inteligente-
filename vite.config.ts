@@ -47,10 +47,6 @@ export default defineConfig(() => {
             },
           ],
         },
-        workbox: {
-          importScripts: ['/push-handler.js'],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-        },
         devOptions: {
           enabled: true,
           type: 'classic',

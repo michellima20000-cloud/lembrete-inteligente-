@@ -1,4 +1,8 @@
-import { faviconAlert } from './faviconAlert';
+// High-Volume Continuous Looping Synthesizer & Alarm Engine
+// Engineered for piercing, loud reminder alarms that wake mobile devices and desktop speakers.
+// Uses dual-engine architecture:
+// 1. Looping HTML5 Audio element backed by a synthesized loud WAV siren buffer (immune to background timer throttling)
+// 2. Web Audio API with DynamicsCompressor and multi-oscillator harmonic boosting for maximum acoustic pressure
 
 function createAlarmWavDataUri(): string {
   // Generate a 1.2 second loud dual-tone digital alarm sample
@@ -89,13 +93,9 @@ class SoundAlertManager {
           if (ctx && ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
-          const audio = this.getLoopAudioElement();
-          if (audio) {
-            audio.load();
-          }
-          if (audio && audio.paused && this.isRinging) {
+          if (this.loopAudioElement && this.loopAudioElement.paused && this.isRinging) {
             if (!this.audioPlayPromise) {
-              this.audioPlayPromise = audio.play();
+              this.audioPlayPromise = this.loopAudioElement.play();
               this.audioPlayPromise
                 ?.catch((err) => this.handleAudioError(err))
                 .finally(() => {
@@ -253,56 +253,13 @@ class SoundAlertManager {
     }
   }
 
-  public async unlockAudio(): Promise<boolean> {
-    try {
-      const ctx = this.getAudioContext();
-      if (ctx && ctx.state === 'suspended') {
-        await ctx.resume().catch(() => {});
-      }
-      const audio = this.getLoopAudioElement();
-      if (audio) {
-        audio.load();
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * Starts continuous, loud, looping alarm ringing that NEVER stops on its own.
    * Continues sounding and vibrating UNTIL the user explicitly clicks Concluir or Adiar!
    */
-  public startRingingAlarm(title?: string) {
+  public startRingingAlarm() {
     if (!this.isSoundEnabled) return;
     this.isRinging = true;
-
-    // Trigger visual flashing favicon for background / minimized tab visibility
-    faviconAlert.startAlert();
-
-    // Register OS MediaSession (Lockscreens, Android notification shade, media controls)
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: title ? `🚨 ALARME: ${title}` : '🚨 ALARME TOCANDO!',
-          artist: 'Lembrete Inteligente',
-          album: 'Compromissos e Lembretes',
-          artwork: [
-            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-          ],
-        });
-        navigator.mediaSession.playbackState = 'playing';
-
-        // Provide pause/stop handler in system media controls
-        navigator.mediaSession.setActionHandler('pause', () => {
-          this.stopRingingAlarm();
-        });
-        navigator.mediaSession.setActionHandler('stop', () => {
-          this.stopRingingAlarm();
-        });
-      } catch {}
-    }
 
     // 1. Play continuous HTML5 looping audio (immune to background tab throttling)
     try {
@@ -376,16 +333,6 @@ class SoundAlertManager {
    */
   public stopRingingAlarm() {
     this.isRinging = false;
-
-    // Restore original favicon
-    faviconAlert.stopAlert();
-
-    // Update MediaSession state
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-      try {
-        navigator.mediaSession.playbackState = 'none';
-      } catch {}
-    }
 
     // Stop HTML5 looping audio safely without interrupting in-flight play()
     if (this.loopAudioElement) {

@@ -10,7 +10,7 @@ import {
   Sliders,
   Sparkles,
   Zap,
-  Volume2,
+  Loader2,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import {
@@ -24,26 +24,47 @@ interface VoiceAndTextInputProps {
   onOpenManualModal: () => void;
 }
 
+// Convert audio blob to base64 string
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManualModal }) => {
   const { processAiCommand, isProcessingAi } = useReminders();
 
   const [inputText, setInputText] = useState('');
   const [selectedAntecedencia, setSelectedAntecedencia] = useState<number>(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [speechTranscript, setSpeechTranscript] = useState('');
+  const [audioVolume, setAudioVolume] = useState<number>(0);
   const [autoScheduleCountdown, setAutoScheduleCountdown] = useState<number | null>(null);
   const [autoScheduleProgress, setAutoScheduleProgress] = useState<number>(0);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'sucesso' | 'erro'; text: string } | null>(null);
 
+  // References to preserve state across async closures and speech callbacks
   const recognitionRef = useRef<any>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
   const timerIntervalRef = useRef<any>(null);
   const silenceTimerRef = useRef<any>(null);
   const progressIntervalRef = useRef<any>(null);
   const isRecordingRef = useRef<boolean>(false);
   const latestTranscriptRef = useRef<string>('');
   const isAutoSchedulingRef = useRef<boolean>(false);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // Clear countdown intervals safely
   const clearCountdown = useCallback(() => {
@@ -59,7 +80,32 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     setAutoScheduleProgress(0);
   }, []);
 
-  // Submit and schedule reminder
+  // Cleanup all audio and speech recognition hardware tracks
+  const stopHardwareStreams = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        if (audioContextRef.current.state !== 'closed') {
+          audioContextRef.current.close();
+        }
+      } catch {}
+      audioContextRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      mediaStreamRef.current = null;
+    }
+    setAudioVolume(0);
+  }, []);
+
+  // Submit and schedule reminder through AI backend
   const scheduleReminderText = useCallback(
     async (textToSchedule: string) => {
       const clean = formatTranscriptPretty(textToSchedule || inputText).trim();
@@ -85,14 +131,16 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
       isAutoSchedulingRef.current = true;
       clearCountdown();
 
-      // Stop speech recognition cleanly
+      // Stop speech recognition and hardware streams cleanly
       isRecordingRef.current = false;
+      setIsRecording(false);
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
         } catch {}
+        recognitionRef.current = null;
       }
-      setIsRecording(false);
+      stopHardwareStreams();
 
       try {
         const result = await processAiCommand({
@@ -120,7 +168,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         setIsRecording(false);
       }
     },
-    [processAiCommand, selectedAntecedencia, inputText, clearCountdown]
+    [processAiCommand, selectedAntecedencia, inputText, clearCountdown, stopHardwareStreams]
   );
 
   // Auto-schedule triggered after brief natural silence when speech has a valid sentence
@@ -134,8 +182,8 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         return;
       }
 
-      // Quick 1.4-second silence window: hands-free automatic scheduling!
-      const TOTAL_MS = 1400;
+      // 1.5-second silence window: hands-free automatic scheduling!
+      const TOTAL_MS = 1500;
       const STEP_MS = 50;
       let elapsed = 0;
 
@@ -160,122 +208,6 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     [clearCountdown, scheduleReminderText]
   );
 
-  // Initialize native Browser Web Speech Recognition with high clarity settings
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'pt-BR';
-        recognition.maxAlternatives = 5;
-
-        recognition.onresult = (event: any) => {
-          let finalTranscript = '';
-          let interimTranscript = '';
-
-          for (let i = 0; i < event.results.length; i++) {
-            const item = event.results[i];
-            // Evaluate alternative transcript hypotheses for highest accuracy
-            let text = item[0]?.transcript || '';
-            let maxConfidence = item[0]?.confidence || 0;
-
-            for (let a = 1; a < item.length; a++) {
-              const alt = item[a];
-              if (alt && alt.confidence > maxConfidence) {
-                maxConfidence = alt.confidence;
-                text = alt.transcript;
-              }
-            }
-
-            if (item.isFinal) {
-              finalTranscript += (finalTranscript ? ' ' : '') + text;
-            } else {
-              interimTranscript += (interimTranscript ? ' ' : '') + text;
-            }
-          }
-
-          const combined = (finalTranscript + (interimTranscript ? ' ' + interimTranscript : '')).trim();
-          const pretty = formatTranscriptPretty(combined);
-
-          if (pretty) {
-            latestTranscriptRef.current = pretty;
-            setSpeechTranscript(pretty);
-            setInputText(pretty);
-            handleTranscriptActivity(pretty);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          if (event.error === 'no-speech') {
-            // User paused quietly; if we already have a valid transcript, auto-schedule!
-            if (
-              isRecordingRef.current &&
-              latestTranscriptRef.current &&
-              latestTranscriptRef.current.trim().split(/\s+/).length >= 2 &&
-              !isOnlyTemporalQuery(latestTranscriptRef.current) &&
-              !isAutoSchedulingRef.current
-            ) {
-              scheduleReminderText(latestTranscriptRef.current);
-            }
-            return;
-          }
-          if (event.error === 'aborted') {
-            return;
-          }
-
-          console.warn('Speech recognition notice:', event.error);
-          if (event.error === 'not-allowed') {
-            setIsRecording(false);
-            isRecordingRef.current = false;
-            clearCountdown();
-            setFeedbackMessage({
-              type: 'erro',
-              text: 'Permissão de microfone negada. Conceda permissão no navegador ou digite o texto.',
-            });
-          }
-        };
-
-        recognition.onend = () => {
-          // If browser completed recognition naturally and we have a valid sentence: auto-schedule!
-          if (isRecordingRef.current && !isAutoSchedulingRef.current) {
-            const text = latestTranscriptRef.current;
-            if (text && text.trim().split(/\s+/).length >= 2 && !isOnlyTemporalQuery(text)) {
-              scheduleReminderText(text);
-              return;
-            }
-
-            // Otherwise, keep listening if recording mode is still active
-            setTimeout(() => {
-              if (isRecordingRef.current && recognitionRef.current && !isAutoSchedulingRef.current) {
-                try {
-                  recognitionRef.current.start();
-                } catch {
-                  setIsRecording(false);
-                  isRecordingRef.current = false;
-                  clearCountdown();
-                }
-              }
-            }, 250);
-          } else {
-            setIsRecording(false);
-            isRecordingRef.current = false;
-            clearCountdown();
-          }
-        };
-
-        recognitionRef.current = recognition;
-      }
-    }
-
-    return () => {
-      clearCountdown();
-    };
-  }, [clearCountdown, handleTranscriptActivity, scheduleReminderText]);
-
   // Duration timer for active microphone
   useEffect(() => {
     if (isRecording) {
@@ -291,75 +223,275 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     };
   }, [isRecording]);
 
+  // Clean up on component unmount
+  useEffect(() => {
+    return () => {
+      clearCountdown();
+      stopHardwareStreams();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+    };
+  }, [clearCountdown, stopHardwareStreams]);
+
+  // Start Voice Capture with Dual Engine (Real-Time Web Speech + Audio Stream Visualizer + MediaRecorder Fallback)
   const startVoiceCapture = async () => {
     setFeedbackMessage(null);
     clearCountdown();
     isAutoSchedulingRef.current = false;
     setSpeechTranscript('');
     latestTranscriptRef.current = '';
+    audioChunksRef.current = [];
 
-    // Prime audio engine for background alarms
-    await soundAlert.unlockAudio();
-
-    if (!recognitionRef.current) {
+    // 1. Request microphone access explicitly to ensure permissions and active hardware stream
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+    } catch (err: any) {
+      console.warn('Erro ao acessar microfone:', err);
+      setIsRecording(false);
+      isRecordingRef.current = false;
+      const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
       setFeedbackMessage({
         type: 'erro',
-        text: 'Seu navegador não suporta reconhecimento de voz direto. Digite seu lembrete no campo abaixo.',
+        text: isDenied
+          ? 'Permissão de microfone bloqueada. Por favor, libere o acesso ao microfone nas configurações do seu navegador para falar os lembretes.'
+          : 'Não foi possível detectar o microfone. Verifique se o dispositivo está conectado ou digite o texto.',
       });
       return;
     }
 
-    // Activate hardware-level DSP voice isolation, acoustic echo cancellation and automatic gain control
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 48000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-        mediaStreamRef.current = stream;
-      } catch {
-        // Fall back gracefully to direct speech recognition if getUserMedia is denied
+    isRecordingRef.current = true;
+    setIsRecording(true);
+
+    // 2. Setup real-time AudioContext Analyser to monitor actual speech volume
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const audioCtx = new AudioContextClass();
+        audioContextRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const updateAudioLevel = () => {
+          if (!isRecordingRef.current) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          // Normalize volume roughly between 0 and 100
+          setAudioVolume(Math.min(100, Math.round((avg / 128) * 100)));
+          animFrameRef.current = requestAnimationFrame(updateAudioLevel);
+        };
+        updateAudioLevel();
       }
+    } catch (e) {
+      console.warn('Erro ao inicializar visualizador de áudio:', e);
     }
 
+    // 3. Setup MediaRecorder for high-fidelity audio capture (guaranteed transcription fallback)
     try {
-      isRecordingRef.current = true;
-      setIsRecording(true);
-      recognitionRef.current.start();
-    } catch (e) {
-      console.warn('Erro ao iniciar reconhecimento:', e);
-      setIsRecording(false);
-      isRecordingRef.current = false;
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
+      let mimeType = '';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+          mimeType = 'audio/ogg';
+        }
+
+        const mediaRecorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.start(250);
+        mediaRecorderRef.current = mediaRecorder;
       }
+    } catch (recErr) {
+      console.warn('MediaRecorder not available or failed:', recErr);
+    }
+
+    // 4. Initialize fresh Native Web Speech Recognition for real-time live typing
+    try {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'pt-BR';
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = (event: any) => {
+          let finalTranscript = '';
+          let interimTranscript = '';
+
+          for (let i = 0; i < event.results.length; i++) {
+            const item = event.results[i];
+            const text = item[0]?.transcript || '';
+            if (item.isFinal) {
+              finalTranscript += (finalTranscript ? ' ' : '') + text;
+            } else {
+              interimTranscript += (interimTranscript ? ' ' : '') + text;
+            }
+          }
+
+          const combined = (finalTranscript + (interimTranscript ? ' ' + interimTranscript : '')).trim();
+          if (combined) {
+            const pretty = formatTranscriptPretty(combined);
+            latestTranscriptRef.current = pretty;
+            setSpeechTranscript(pretty);
+            setInputText(pretty);
+            handleTranscriptActivity(pretty);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          // 'no-speech' is common when user pauses; do not stop recording
+          if (event.error === 'no-speech') {
+            return;
+          }
+          if (event.error === 'network') {
+            console.warn('Web Speech API rede indisponível; áudio será transcrito via IA Gemini ao finalizar.');
+            return;
+          }
+          console.warn('SpeechRecognition notice:', event.error);
+        };
+
+        recognition.onend = () => {
+          // If still recording and user hasn't stopped, keep recognition alive
+          if (isRecordingRef.current && !isAutoSchedulingRef.current) {
+            try {
+              recognition.start();
+            } catch {}
+          }
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+      }
+    } catch (e) {
+      console.warn('SpeechRecognition start error:', e);
     }
   };
 
-  const stopVoiceCaptureAndSchedule = () => {
+  // Stop voice capture and process reminder (using real-time transcript or fallback Gemini transcription)
+  const stopVoiceCaptureAndSchedule = async () => {
+    if (!isRecordingRef.current && !isRecording) return;
     isRecordingRef.current = false;
     setIsRecording(false);
     clearCountdown();
 
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-
+    // 1. Stop SpeechRecognition
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {}
+      recognitionRef.current = null;
     }
 
-    const textToSchedule = formatTranscriptPretty(latestTranscriptRef.current || inputText);
-    scheduleReminderText(textToSchedule);
+    // 2. Stop MediaRecorder and grab audio blob
+    const recorder = mediaRecorderRef.current;
+    let audioBlobPromise: Promise<Blob | null> = Promise.resolve(null);
+    if (recorder && recorder.state !== 'inactive') {
+      audioBlobPromise = new Promise((resolve) => {
+        recorder.onstop = () => {
+          if (audioChunksRef.current.length > 0) {
+            const mime = recorder.mimeType || 'audio/webm';
+            const blob = new Blob(audioChunksRef.current, { type: mime });
+            resolve(blob);
+          } else {
+            resolve(null);
+          }
+        };
+        try {
+          recorder.stop();
+        } catch {
+          resolve(null);
+        }
+      });
+    }
+
+    // 3. Stop mic tracks and audio context
+    stopHardwareStreams();
+
+    // 4. Check if live Web Speech already captured the text
+    const liveText = formatTranscriptPretty(latestTranscriptRef.current || inputText).trim();
+    if (liveText.length >= 2 && !isOnlyTemporalQuery(liveText)) {
+      scheduleReminderText(liveText);
+      return;
+    }
+
+    // 5. If Web Speech was silent or failed, use server-side Gemini audio transcription!
+    const audioBlob = await audioBlobPromise;
+    if (audioBlob && audioBlob.size > 2000) {
+      setIsTranscribing(true);
+      setFeedbackMessage({
+        type: 'sucesso',
+        text: 'Transcrevendo sua fala com Inteligência Artificial...',
+      });
+
+      try {
+        const base64Audio = await blobToBase64(audioBlob);
+        const resp = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audio: base64Audio,
+            mimeType: audioBlob.type || 'audio/webm',
+          }),
+        });
+
+        const data = await resp.json();
+        if (data.status === 'sucesso' && data.transcript && data.transcript.trim()) {
+          const pretty = formatTranscriptPretty(data.transcript);
+          setInputText(pretty);
+          setSpeechTranscript(pretty);
+          latestTranscriptRef.current = pretty;
+          setIsTranscribing(false);
+          scheduleReminderText(pretty);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('Erro ao transcrever com Gemini:', err);
+      } finally {
+        setIsTranscribing(false);
+      }
+    }
+
+    // If still no valid text was detected
+    if (!liveText) {
+      setFeedbackMessage({
+        type: 'erro',
+        text: 'Nenhuma fala foi detectada no microfone. Verifique se o microfone está ativo e tente falar um pouco mais alto.',
+      });
+    } else {
+      scheduleReminderText(liveText);
+    }
   };
 
   const cancelVoiceCapture = () => {
@@ -368,17 +500,18 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
     clearCountdown();
     setSpeechTranscript('');
     latestTranscriptRef.current = '';
-
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {}
+      recognitionRef.current = null;
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
+    stopHardwareStreams();
   };
 
   const handleSubmit = (e?: React.FormEvent) => {
@@ -392,58 +525,52 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
 
   const hasDetectedSpeech = speechTranscript.trim().length > 0;
   const isSpeechValid = hasDetectedSpeech && !isOnlyTemporalQuery(speechTranscript);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-resize textarea to fit text without showing ugly vertical scrollbars
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.max(60, textareaRef.current.scrollHeight)}px`;
-    }
-  }, [inputText]);
 
   return (
-    <section className="bg-slate-900/90 rounded-3xl p-4 sm:p-5 border border-slate-800/90 shadow-xl backdrop-blur-md">
-      {/* Clean Modern Header */}
+    <section className="bg-slate-900/80 rounded-3xl p-4 sm:p-5 border border-slate-800 shadow-xl backdrop-blur-md">
+      {/* Header Info */}
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-            <CalendarCheck className="w-4 h-4 text-indigo-400" />
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-400">
+            <CalendarCheck className="w-4 h-4 text-emerald-400" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white tracking-tight">
-              Criar Lembrete
+            <h2 className="text-sm font-bold text-white tracking-wide flex items-center gap-1.5">
+              <span>Comando por Voz ou Texto</span>
+              <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 text-[10px] font-extrabold uppercase tracking-wider">
+                Automático
+              </span>
             </h2>
-            <p className="text-[11px] text-slate-400">
-              Fale no microfone ou digite seu compromisso
+            <p className="text-[11px] text-slate-400 flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>Fale e o lembrete é compreendido e agendado sozinho</span>
             </p>
           </div>
         </div>
 
         <button
           onClick={onOpenManualModal}
-          className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white py-1.5 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700/80 border border-slate-700/60 transition cursor-pointer"
-          title="Agendamento manual com campos de data e hora"
+          className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-indigo-300 py-1 px-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 transition cursor-pointer"
+          title="Agendamento manual por data e hora"
         >
-          <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Manual</span>
+          <Sliders className="w-3 h-3 text-indigo-400" />
+          Manual
         </button>
       </div>
 
       {/* Main Input Box */}
       <form onSubmit={handleSubmit} className="relative">
-        <div className="relative rounded-2xl bg-slate-950/70 border border-slate-800 focus-within:border-indigo-500/80 transition shadow-inner">
+        <div className="relative rounded-2xl bg-slate-800/90 border border-slate-700 focus-within:border-indigo-500 transition shadow-inner">
           <textarea
-            ref={textareaRef}
             rows={2}
             value={inputText}
             onChange={(e) => {
               setInputText(e.target.value);
               latestTranscriptRef.current = e.target.value;
             }}
-            placeholder='Ex: "Hoje às 15h tomar remédio" ou "Pagar conta amanhã às 10h"'
-            disabled={isProcessingAi}
-            className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none resize-none overflow-hidden scrollbar-none disabled:opacity-50 min-h-[60px]"
+            placeholder='Fale no microfone ou digite: "Hoje às 15h tomar remédio" ou "Pagar conta amanhã às 10h"...'
+            disabled={isProcessingAi || isTranscribing}
+            className="w-full bg-transparent px-4 py-3 text-sm text-white placeholder-slate-400 focus:outline-none resize-none disabled:opacity-50"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -453,23 +580,33 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
           />
 
           {/* Bottom Bar inside Input */}
-          <div className="flex items-center justify-between px-3 pb-2.5 pt-1.5 border-t border-slate-800/60 gap-2">
-            {/* Antecedência Compact Dropdown - Clean & Zero Lateral Overflow */}
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <label htmlFor="antecedencia-select" className="sr-only">Aviso prévio</label>
-              <select
-                id="antecedencia-select"
-                value={selectedAntecedencia}
-                onChange={(e) => setSelectedAntecedencia(Number(e.target.value))}
-                className="bg-slate-900 hover:bg-slate-800/90 text-slate-300 text-xs rounded-xl px-2.5 py-1.5 border border-slate-700/60 focus:outline-none focus:border-indigo-500 cursor-pointer transition font-medium"
-              >
-                <option value={0}>Avisar no horário</option>
-                <option value={5}>Avisar 5m antes</option>
-                <option value={10}>Avisar 10m antes</option>
-                <option value={15}>Avisar 15m antes</option>
-                <option value={30}>Avisar 30m antes</option>
-              </select>
+          <div className="flex items-center justify-between px-3 pb-2.5 pt-1 border-t border-slate-700/40">
+            {/* Antecedência Selector */}
+            <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none">
+              <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1 shrink-0">
+                <Clock className="w-3 h-3 text-indigo-400" />
+                Avisar:
+              </span>
+              {[
+                { label: 'No horário', val: 0 },
+                { label: '5m antes', val: 5 },
+                { label: '10m antes', val: 10 },
+                { label: '15m antes', val: 15 },
+                { label: '30m antes', val: 30 },
+              ].map((opt) => (
+                <button
+                  key={opt.val}
+                  type="button"
+                  onClick={() => setSelectedAntecedencia(opt.val)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition shrink-0 cursor-pointer ${
+                    selectedAntecedencia === opt.val
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-700/60 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
 
             {/* Actions: Mic & Submit */}
@@ -478,24 +615,24 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               <button
                 type="button"
                 onClick={isRecording ? stopVoiceCaptureAndSchedule : startVoiceCapture}
-                disabled={isProcessingAi}
-                className={`relative w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
+                disabled={isProcessingAi || isTranscribing}
+                className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
                   isRecording
                     ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/50 scale-105 ring-2 ring-rose-400/50'
-                    : 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white shadow-sm active:scale-95'
+                    : 'bg-indigo-950/90 text-indigo-200 border border-indigo-500/40 hover:bg-indigo-900/90 hover:text-white hover:border-indigo-400 shadow-sm shadow-indigo-950/50 active:scale-95'
                 }`}
                 title={isRecording ? 'Clique para agendar imediatamente' : 'Falar comando no microfone'}
                 aria-label="Falar comando no microfone"
               >
                 {isRecording ? (
-                  <MicOff className="w-5 h-5 animate-pulse" />
+                  <MicOff className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
                 ) : (
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
                 )}
                 {isRecording && (
-                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
                   </span>
                 )}
               </button>
@@ -503,18 +640,18 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isProcessingAi || !inputText.trim()}
-                className="flex items-center gap-1.5 px-3.5 sm:px-4 h-10 sm:h-11 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/25 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
+                disabled={isProcessingAi || isTranscribing || !inputText.trim()}
+                className="flex items-center gap-1.5 px-4 h-11 sm:h-12 rounded-2xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 cursor-pointer"
               >
                 {isProcessingAi ? (
                   <>
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     <span>Agendando...</span>
                   </>
                 ) : (
                   <>
                     <span>Agendar</span>
-                    <Send className="w-3.5 h-3.5" />
+                    <Send className="w-4 h-4" />
                   </>
                 )}
               </button>
@@ -523,10 +660,21 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         </div>
       </form>
 
-      {/* Recording in progress overlay bar with live waveform and automatic scheduling countdown */}
+      {/* AI Audio Transcription in progress state */}
+      {isTranscribing && (
+        <div className="mt-3 p-3.5 rounded-2xl bg-indigo-950/80 border border-indigo-500/40 text-xs text-indigo-200 flex items-center gap-3 animate-in fade-in">
+          <Loader2 className="w-5 h-5 text-indigo-400 animate-spin shrink-0" />
+          <div>
+            <p className="font-bold text-white text-xs">Transcrevendo áudio com Inteligência Artificial...</p>
+            <p className="text-[11px] text-indigo-300">Convertendo sua voz em texto e programando o lembrete.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Recording in progress overlay bar with live real-time voice volume waveform and automatic scheduling countdown */}
       {isRecording && (
         <div className="mt-3 p-3.5 sm:p-4 rounded-2xl bg-slate-800/95 border-2 border-rose-500/70 shadow-2xl text-xs text-rose-200 animate-in fade-in space-y-3">
-          {/* Top Row: Status + Audio Equalizer + Controls */}
+          {/* Top Row: Status + Real-Time Voice Waveform + Controls */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <span className="flex h-3 w-3 relative">
@@ -534,23 +682,36 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
               </span>
 
-              {/* Equalizer Waveform Bars */}
-              <div className="flex items-center gap-1 h-6 px-1">
-                <span className="w-1 bg-rose-400 rounded-full animate-soundbar-1" />
-                <span className="w-1 bg-amber-400 rounded-full animate-soundbar-2" />
-                <span className="w-1 bg-emerald-400 rounded-full animate-soundbar-3" />
-                <span className="w-1 bg-indigo-400 rounded-full animate-soundbar-4" />
-                <span className="w-1 bg-pink-400 rounded-full animate-soundbar-5" />
-                <span className="w-1 bg-cyan-400 rounded-full animate-soundbar-6" />
-                <span className="w-1 bg-rose-400 rounded-full animate-soundbar-7" />
+              {/* Equalizer Waveform Bars dynamically reacting to live microphone voice volume */}
+              <div className="flex items-center gap-1 h-7 px-2 py-1 bg-slate-900/80 rounded-xl border border-slate-700/60">
+                {[0.4, 0.7, 1.0, 0.85, 0.6, 0.9, 0.5].map((factor, idx) => {
+                  const dynamicHeight = Math.max(5, Math.min(24, Math.round(audioVolume * 0.24 * factor + 5)));
+                  const isActive = audioVolume > 8;
+                  return (
+                    <span
+                      key={idx}
+                      className={`w-1 rounded-full transition-all duration-75 ${
+                        isActive ? 'bg-emerald-400 shadow-sm shadow-emerald-400/40' : 'bg-slate-600'
+                      }`}
+                      style={{ height: `${dynamicHeight}px` }}
+                    />
+                  );
+                })}
               </div>
 
               <div>
-                <span className="font-bold text-white tracking-wide text-xs">
-                  Ouvindo com Alta Nitidez ({recordingSeconds}s)
+                <span className="font-bold text-white tracking-wide text-xs flex items-center gap-1.5">
+                  <span>Microfone Ativo ({recordingSeconds}s)</span>
+                  {audioVolume > 8 && (
+                    <span className="text-[10px] text-emerald-400 font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
+                      Voz detectada
+                    </span>
+                  )}
                 </span>
                 <span className="block text-[10px] text-slate-400 font-medium">
-                  Agendamento 100% automático ao terminar de falar
+                  {audioVolume > 8
+                    ? 'Capturando sua fala • Ao parar de falar, o agendamento é automático'
+                    : 'Fale agora o lembrete desejado...'}
                 </span>
               </div>
             </div>
@@ -566,9 +727,8 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
               <button
                 type="button"
                 onClick={stopVoiceCaptureAndSchedule}
-                disabled={!hasDetectedSpeech}
-                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-emerald-600/30 transition cursor-pointer active:scale-95 flex items-center gap-1.5"
-                title="Agendar imediatamente sem aguardar silêncio"
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/30 transition cursor-pointer active:scale-95 flex items-center gap-1.5"
+                title="Agendar imediatamente"
               >
                 <span>Agendar Agora</span>
                 <Send className="w-3 h-3" />
@@ -621,7 +781,7 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
                 <span className="text-white font-semibold">"{speechTranscript}"</span>
               ) : (
                 <span className="italic text-slate-500">
-                  Fale claramente o que você precisa fazer e quando...
+                  Fale claramente o que você precisa fazer e quando (ex: "hoje às 15 horas tomar remédio")...
                 </span>
               )}
             </p>

@@ -1,7 +1,8 @@
 import React from 'react';
-import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell } from 'lucide-react';
+import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell, Download } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface UserAccountModalProps {
   onClose: () => void;
@@ -98,6 +99,14 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
                 Permitir Alertas
               </button>
             )}
+          </div>
+
+          <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-700/50">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Download className="w-4 h-4 text-indigo-400" />
+              Instalar App:
+            </span>
+            <PWAInstallButton />
           </div>
         </div>
 

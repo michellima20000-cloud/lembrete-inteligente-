@@ -1,43 +1,64 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellOff } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellRing } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { UserAccountModal } from './UserAccountModal';
-import { NotificationSettingsModal } from './NotificationSettingsModal';
-import { soundAlert } from '../utils/audioAlert';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
-  const { soundEnabled, toggleSound, notificationPermission, isIframe } = useReminders();
+  const { soundEnabled, toggleSound, isPushSubscribed, subscribePush, testPushNotification } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
-  const [showNotificationModal, setShowNotificationModal] = useState(false);
-
-  const handleNotificationClick = () => {
-    // Prime the audio engine on user gesture
-    soundAlert.unlockAudio().catch(() => {});
-    setShowNotificationModal(true);
-  };
 
   return (
     <>
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
-          {/* Brand Wordmark */}
+          {/* Brand & Status Indicator */}
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20">
-              <CalendarCheck className="w-4.5 h-4.5" />
+            <div className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-emerald-500 shadow-md shadow-indigo-500/25">
+              <CalendarCheck className="w-5 h-5 text-white" />
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-900"></span>
+              </span>
             </div>
-            <h1 className="text-base font-bold tracking-tight text-white">
-              Lembrete <span className="text-indigo-400">Inteligente</span>
-            </h1>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-base font-black tracking-tight text-white">
+                  Lembrete <span className="text-indigo-400">Inteligente</span>
+                </h1>
+              </div>
+            </div>
           </div>
 
           {/* Actions & Profile */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {/* PWA Install Button */}
             <PWAInstallButton />
+
+            {/* Push Notifications Status & Quick Toggle */}
+            <button
+              onClick={isPushSubscribed ? testPushNotification : subscribePush}
+              className={`p-2 rounded-xl transition-colors cursor-pointer relative ${
+                isPushSubscribed
+                  ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-900/60'
+                  : 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/60 animate-pulse'
+              }`}
+              title={
+                isPushSubscribed
+                  ? 'Notificações no celular ativas! Clique para enviar notificação de teste.'
+                  : 'Clique para ativar notificações no celular com tela bloqueada.'
+              }
+            >
+              {isPushSubscribed ? <BellRing className="w-4 h-4 text-emerald-400" /> : <Bell className="w-4 h-4" />}
+              {isPushSubscribed && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                </span>
+              )}
+            </button>
 
             {/* Sound Toggle */}
             <button
@@ -50,41 +71,6 @@ export const Header: React.FC = () => {
               title={soundEnabled ? 'Som ativado (clique para desativar)' : 'Som desativado (clique para ativar)'}
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            </button>
-
-            {/* Web Notification Toggle & Background Alarm Settings */}
-            <button
-              onClick={handleNotificationClick}
-              className={`p-2 rounded-xl transition-all cursor-pointer relative active:scale-95 ${
-                notificationPermission === 'granted'
-                  ? 'bg-indigo-950/60 text-emerald-300 border border-emerald-500/30 hover:bg-indigo-900/60'
-                  : isIframe
-                  ? 'bg-indigo-950/50 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/50'
-                  : 'bg-slate-800 text-amber-300 border border-amber-500/30 hover:bg-slate-700 hover:text-amber-200'
-              }`}
-              title={
-                notificationPermission === 'granted'
-                  ? 'Notificações e alarme em segundo plano ativos'
-                  : isIframe
-                  ? 'Alarmes em segundo plano (Clique para abrir em aba direta)'
-                  : 'Ativar notificações em segundo plano'
-              }
-              aria-label="Configurar alarmes e notificações em segundo plano"
-            >
-              {notificationPermission === 'granted' ? (
-                <Bell className="w-4 h-4 text-emerald-400" />
-              ) : isIframe ? (
-                <Bell className="w-4 h-4 text-indigo-400" />
-              ) : (
-                <BellOff className="w-4 h-4 text-amber-400" />
-              )}
-              {notificationPermission === 'granted' ? (
-                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              ) : isIframe ? (
-                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-indigo-400" />
-              ) : (
-                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              )}
             </button>
 
             {/* Authenticated User Chip */}
@@ -129,9 +115,6 @@ export const Header: React.FC = () => {
       </header>
 
       {showUserModal && <UserAccountModal onClose={() => setShowUserModal(false)} />}
-      {showNotificationModal && (
-        <NotificationSettingsModal onClose={() => setShowNotificationModal(false)} />
-      )}
     </>
   );
 };

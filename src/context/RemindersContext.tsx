@@ -2,11 +2,10 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Lembrete, StatusTarefa, AiParseResponse } from '../types';
 import { useUser } from './UserContext';
 import { soundAlert } from '../utils/audioAlert';
-import { backgroundTimer } from '../utils/backgroundTimer';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { parseReminderCommand } from '../utils/reminderParser';
-import { isInsideIframe } from '../utils/browserEnv';
+import { pushManager } from '../utils/pushManager';
 
 interface RemindersContextType {
   reminders: Lembrete[];
@@ -32,9 +31,11 @@ interface RemindersContextType {
   }) => Promise<void>;
   lastAiResponse: AiParseResponse | null;
   requestNotificationPermission: () => Promise<boolean>;
-  refreshPermissionState: () => NotificationPermission;
   notificationPermission: NotificationPermission;
-  isIframe: boolean;
+  isPushSubscribed: boolean;
+  subscribePush: () => Promise<{ success: boolean; message: string }>;
+  testPushNotification: () => Promise<{ success: boolean; message: string }>;
+  unsubscribePush: () => Promise<boolean>;
   soundEnabled: boolean;
   toggleSound: () => void;
   testSound: () => void;
@@ -52,142 +53,111 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activeAlarmReminder, setActiveAlarmReminder] = useState<Lembrete | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [isPushSubscribed, setIsPushSubscribed] = useState(false);
   const [isFirestoreSyncing, setIsFirestoreSyncing] = useState(false);
 
   const triggeredIdsRef = useRef<Set<string>>(new Set());
 
-  // Real-time permission checker
-  const refreshPermissionState = useCallback((): NotificationPermission => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      const current = Notification.permission;
-      setNotificationPermission(current);
-      return current;
-    }
-    return 'default';
-  }, []);
-
-  // Monitor permission state automatically across tab switches & settings changes
+  // Check notification permission and initialize PushManager
   useEffect(() => {
-    refreshPermissionState();
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
 
-    const handleFocus = () => {
-      refreshPermissionState();
-    };
+    pushManager.init();
 
-    window.addEventListener('focus', handleFocus);
+    pushManager.getExistingSubscription().then((sub) => {
+      setIsPushSubscribed(!!sub);
+      if (sub && currentUser?.id) {
+        fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            subscription: sub.toJSON(),
+          }),
+        }).catch(() => {});
+      }
+    });
 
-    let permStatus: PermissionStatus | null = null;
-    if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
-      navigator.permissions
-        .query({ name: 'notifications' as PermissionName })
-        .then((status) => {
-          permStatus = status;
-          status.onchange = () => {
-            refreshPermissionState();
-          };
-        })
-        .catch(() => {});
+    // Listen to push alarm signals from service worker
+    const unsubscribePushAlarm = pushManager.onAlarmTriggered((reminderId) => {
+      soundAlert.startRingingAlarm();
+      if (reminderId) {
+        setReminders((currentList) => {
+          const found = currentList.find((r) => r.id === reminderId);
+          if (found) {
+            setActiveAlarmReminder(found);
+          }
+          return currentList;
+        });
+      }
+    });
+
+    // Check if app was opened via notification with ?alarm_reminder_id=
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const alarmReminderId = urlParams.get('alarm_reminder_id');
+      if (alarmReminderId) {
+        soundAlert.startRingingAlarm();
+        setReminders((currentList) => {
+          const found = currentList.find((r) => r.id === alarmReminderId);
+          if (found) {
+            setActiveAlarmReminder(found);
+          }
+          return currentList;
+        });
+        window.history.replaceState({}, '', '/');
+      }
     }
 
     return () => {
-      window.removeEventListener('focus', handleFocus);
-      if (permStatus) {
-        permStatus.onchange = null;
-      }
+      unsubscribePushAlarm();
     };
-  }, [refreshPermissionState]);
-
-  const isIframe = isInsideIframe();
+  }, [currentUser?.id]);
 
   const requestNotificationPermission = async (): Promise<boolean> => {
-    // Prime audio context and looping audio element on user gesture
-    await soundAlert.unlockAudio().catch(() => {});
-
     if (typeof window === 'undefined' || !('Notification' in window)) {
       return false;
     }
-
-    if (isInsideIframe()) {
-      // In Chromium / Edge, notifications inside cross-origin iframes are restricted by browser policy
-      return false;
-    }
-
     try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
-
-      if (permission === 'granted') {
-        soundAlert.playChime();
-
-        // Dispatch instant confirmation notification so user verifies it works
-        const testTitle = '🔔 Alarmes em Segundo Plano Ativos';
-        const testBody = 'Tudo pronto! Seus lembretes tocarão som e exibirão notificações mesmo com o navegador minimizado.';
-
-        if ('serviceWorker' in navigator) {
-          try {
-            const reg = await navigator.serviceWorker.ready;
-            if (reg && typeof reg.showNotification === 'function') {
-              await reg.showNotification(testTitle, {
-                body: testBody,
-                icon: '/icon-192.png',
-                badge: '/icon-192.png',
-                tag: 'pwa_test_activation',
-              } as any);
-              return true;
-            }
-          } catch {}
-        }
-
-        try {
-          new Notification(testTitle, {
-            body: testBody,
-            icon: '/icon-192.png',
-          });
-        } catch {}
-
-        return true;
-      }
-      return false;
+      return permission === 'granted';
     } catch (e) {
       console.warn('Could not request notification permission:', e);
       return false;
     }
   };
 
-  // Automatic Permission Request: triggers as soon as user enters the system (in top-level window/PWA)
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
-    if (isInsideIframe()) return;
-
-    // 1. If permission is still default, try requesting automatically on mount / login
-    if (Notification.permission === 'default') {
-      requestNotificationPermission().catch(() => {});
+  const subscribePush = async () => {
+    if (!currentUser?.id) {
+      return { success: false, message: 'Usuário não autenticado.' };
     }
+    const res = await pushManager.subscribeToPush(currentUser.id);
+    if (res.success) {
+      setIsPushSubscribed(true);
+      setNotificationPermission('granted');
+      pushManager.syncReminders(currentUser.id, reminders);
+    }
+    return res;
+  };
 
-    // 2. Also register one-time gesture trigger to satisfy strict browser user-activation rules
-    const onUserInteraction = async () => {
-      window.removeEventListener('click', onUserInteraction);
-      window.removeEventListener('touchstart', onUserInteraction);
-      window.removeEventListener('keydown', onUserInteraction);
+  const testPushNotification = async () => {
+    if (!currentUser?.id) {
+      return { success: false, message: 'Usuário não autenticado.' };
+    }
+    return await pushManager.testPush(currentUser.id);
+  };
 
-      // Pre-unlock audio engine on first gesture
-      soundAlert.unlockAudio().catch(() => {});
-
-      if ('Notification' in window && Notification.permission === 'default') {
-        await requestNotificationPermission().catch(() => {});
-      }
-    };
-
-    window.addEventListener('click', onUserInteraction, { once: true, passive: true });
-    window.addEventListener('touchstart', onUserInteraction, { once: true, passive: true });
-    window.addEventListener('keydown', onUserInteraction, { once: true, passive: true });
-
-    return () => {
-      window.removeEventListener('click', onUserInteraction);
-      window.removeEventListener('touchstart', onUserInteraction);
-      window.removeEventListener('keydown', onUserInteraction);
-    };
-  }, [currentUser?.id]);
+  const unsubscribePush = async () => {
+    if (!currentUser?.id) return false;
+    const ok = await pushManager.unsubscribeFromPush(currentUser.id);
+    if (ok) {
+      setIsPushSubscribed(false);
+    }
+    return ok;
+  };
 
   // Helper to load isolated partition
   const loadLocalPartition = useCallback((userId: string): Lembrete[] => {
@@ -275,6 +245,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             setReminders(verified);
             saveLocalPartition(currentUser.id, verified);
+            pushManager.syncReminders(currentUser.id, verified);
           }
         },
         (error) => {
@@ -300,15 +271,12 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const body =
       item.antecedencia_minutos > 0
         ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso!`
-        : `Horário do compromisso alcançado: ${item.titulo}! Clique para abrir o lembrete.`;
+        : `Horário do compromisso alcançado: ${item.titulo}!`;
 
-    // 1. Android Chrome / PWA Service Worker notification (Supports vibration, action buttons & background wake)
-    let dispatched = false;
+    // 1. Android Chrome / PWA Service Worker notification (Supports vibration & background wake)
     if ('serviceWorker' in navigator) {
       try {
-        const swReadyPromise = navigator.serviceWorker.ready;
-        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 500));
-        const reg = await Promise.race([swReadyPromise, timeoutPromise]);
+        const reg = await navigator.serviceWorker.ready;
         if (reg && typeof reg.showNotification === 'function') {
           await reg.showNotification(title, {
             body,
@@ -317,98 +285,95 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             tag: item.id,
             renotify: true,
             requireInteraction: true,
-            vibrate: [800, 250, 800, 250, 800, 250, 1200],
+            vibrate: [600, 200, 600, 200, 600, 200, 800],
             data: { id: item.id },
-            actions: [
-              { action: 'complete', title: '✅ Concluir' },
-              { action: 'snooze', title: '⏱ Adiar 10m' },
-            ],
           } as any);
-          dispatched = true;
+          return;
         }
       } catch (swErr) {
         console.warn('Service worker showNotification notice:', swErr);
       }
     }
 
-    // 2. Desktop & iOS Safari fallback or complementary dispatch
-    if (!dispatched) {
-      try {
-        const notif = new Notification(title, {
-          body,
-          icon: '/icon-192.png',
-          badge: '/icon-192.png',
-          tag: item.id,
-          requireInteraction: true,
-        } as any);
-        notif.onclick = () => {
-          window.focus();
-          notif.close();
-        };
-      } catch (e) {
-        console.warn('Fallback Notification constructor failed:', e);
-      }
+    // 2. Desktop & iOS Safari fallback
+    try {
+      const notif = new Notification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: item.id,
+        requireInteraction: true,
+      } as any);
+      notif.onclick = () => {
+        window.focus();
+      };
+    } catch (e) {
+      console.warn('Fallback Notification constructor failed:', e);
     }
   };
 
-  // Listen to background notification actions from Service Worker (public/sw-custom.js)
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+  // Check due reminders and fire full audio + notification + modal alarm
+  const checkDueReminders = useCallback(() => {
+    const nowMs = Date.now();
 
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'NOTIFICATION_ACTION') {
-        const { action, reminderId } = event.data;
-        if (action === 'complete' && reminderId) {
-          updateStatus(reminderId, 'concluído');
-        } else if (action === 'snooze' && reminderId) {
-          snoozeReminder(reminderId, 10);
-        } else if (action === 'focus') {
-          window.focus();
-        }
+    reminders.forEach((item) => {
+      if (item.status_tarefa === 'concluído') return;
+
+      const targetTime = new Date(item.data_hora_execucao).getTime();
+      const antecedenciaMs = (item.antecedencia_minutos || 0) * 60 * 1000;
+      const triggerTime = targetTime - antecedenciaMs;
+
+      const diff = nowMs - triggerTime;
+      const triggerKey = `${item.id}_${item.data_hora_execucao}`;
+
+      // Alarm if due and hasn't triggered yet (tolerant up to 24 hours of background/sleep)
+      if (diff >= 0 && diff < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(triggerKey)) {
+        triggeredIdsRef.current.add(triggerKey);
+
+        soundAlert.startRingingAlarm();
+        setActiveAlarmReminder(item);
+        triggerPushNotification(item);
+      }
+    });
+  }, [reminders]);
+
+  // Real-time tick to check reminders due using both interval and background Web Worker
+  useEffect(() => {
+    checkDueReminders();
+
+    const interval = setInterval(checkDueReminders, 2000);
+
+    // Dedicated background Web Worker (immune to browser inactive tab timer throttling)
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker('/alarmWorker.js');
+      worker.postMessage('START');
+      worker.onmessage = () => {
+        checkDueReminders();
+      };
+    } catch (e) {
+      console.warn('Web Worker fallback to interval:', e);
+    }
+
+    // Instant trigger when user switches back or unlocks screen
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkDueReminders();
       }
     };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
     return () => {
-      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      clearInterval(interval);
+      if (worker) {
+        try {
+          worker.postMessage('STOP');
+          worker.terminate();
+        } catch {}
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
-
-  // Real-time tick using BackgroundTimer (Web Worker dedicated ticker, immune to background tab throttling)
-  useEffect(() => {
-    const checkReminders = () => {
-      const nowMs = Date.now();
-
-      reminders.forEach((item) => {
-        if (item.status_tarefa === 'concluído') return;
-
-        const targetTime = new Date(item.data_hora_execucao).getTime();
-        const antecedenciaMs = (item.antecedencia_minutos || 0) * 60 * 1000;
-        const triggerTime = targetTime - antecedenciaMs;
-
-        const diff = nowMs - triggerTime;
-        const triggerKey = `${item.id}_${item.data_hora_execucao}`;
-
-        // Tolerant window: trigger for any due reminder within the last 24h that hasn't fired yet
-        if (diff >= 0 && diff < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(triggerKey)) {
-          triggeredIdsRef.current.add(triggerKey);
-
-          soundAlert.startRingingAlarm(item.titulo);
-          setActiveAlarmReminder(item);
-          triggerPushNotification(item);
-        }
-      });
-    };
-
-    // Immediate check on reminder list change
-    checkReminders();
-
-    // Subscribe to Web Worker ticker (runs every 1 second in background thread)
-    const unsubscribe = backgroundTimer.subscribe(checkReminders);
-    return () => {
-      unsubscribe();
-    };
-  }, [reminders]);
+  }, [checkDueReminders]);
 
   // Tab Title Flashing alert when alarm is ringing in background tab
   useEffect(() => {
@@ -756,9 +721,11 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createManualReminder,
         lastAiResponse,
         requestNotificationPermission,
-        refreshPermissionState,
         notificationPermission,
-        isIframe,
+        isPushSubscribed,
+        subscribePush,
+        testPushNotification,
+        unsubscribePush,
         soundEnabled,
         toggleSound,
         testSound,
