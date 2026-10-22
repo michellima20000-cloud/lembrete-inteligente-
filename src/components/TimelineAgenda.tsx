@@ -19,7 +19,13 @@ import { useUser } from '../context/UserContext';
 import { Lembrete, StatusTarefa } from '../types';
 
 export const TimelineAgenda: React.FC = () => {
-  const { reminders, updateStatus, snoozeReminder, deleteReminder, isLoading } = useReminders();
+  const {
+    reminders,
+    updateStatus,
+    snoozeReminder,
+    deleteReminder,
+    isLoading,
+  } = useReminders();
   const { currentUser } = useUser();
 
   const [activeTab, setActiveTab] = useState<'pendentes' | 'adiados' | 'concluídos' | 'todos'>('pendentes');
