@@ -13,7 +13,7 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'sw-custom.js'],
         workbox: {
-          importScripts: ['/sw-custom.js'],
+          navigateFallbackDenylist: [/^\/api/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         },
         manifest: {
@@ -48,8 +48,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'classic',
+          enabled: false,
         },
       }),
     ],

@@ -40,6 +40,13 @@ async function safeFetchJson<T = any>(
         `[PushManager] Resposta não-JSON recebida de ${url} (status ${res.status}):`,
         text.slice(0, 100)
       );
+      if (res.status === 405) {
+        return {
+          ok: false,
+          status: 405,
+          error: 'Método bloqueado por proxy móvel (405).',
+        };
+      }
       return {
         ok: false,
         status: res.status,
@@ -245,7 +252,7 @@ class PushManagerService {
 
       // 5. Send subscription to backend linked to user_id
       const subJson = subscription.toJSON();
-      const saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(
+      let saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(
         '/api/push/subscribe',
         {
           method: 'POST',
@@ -257,25 +264,18 @@ class PushManagerService {
         }
       );
 
+      // If POST was rejected by proxy (e.g. 405 Method Not Allowed or network glitch), retry via fallback
       if (!saveResult.ok) {
-        // Retry once after 500ms
-        await new Promise((r) => setTimeout(r, 500));
-        const retryResult = await safeFetchJson<{ status: string; mensagem?: string }>(
-          '/api/push/subscribe',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              user_id: userId,
-              subscription: subJson,
-            }),
-          }
+        console.log('[PushManager] Tentando rota de contingência para registro push...');
+        await new Promise((r) => setTimeout(r, 400));
+        const queryUrl = `/api/push/subscribe?user_id=${encodeURIComponent(userId)}&subscription=${encodeURIComponent(JSON.stringify(subJson))}`;
+        saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(queryUrl);
+      }
+
+      if (!saveResult.ok) {
+        throw new Error(
+          saveResult.error || 'Falha ao salvar inscrição no servidor.'
         );
-        if (!retryResult.ok) {
-          throw new Error(
-            retryResult.error || saveResult.error || 'Falha ao salvar inscrição no servidor.'
-          );
-        }
       }
 
       // 6. Auto-sync user's active reminders so background runner starts monitoring immediately
@@ -326,11 +326,17 @@ class PushManagerService {
 
   public async testPush(userId: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await safeFetchJson<{ status: string; mensagem?: string }>('/api/push/test', {
+      let res = await safeFetchJson<{ status: string; mensagem?: string }>('/api/push/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId }),
       });
+      // Fallback if carrier / proxy rejects POST with 405
+      if (!res.ok) {
+        res = await safeFetchJson<{ status: string; mensagem?: string }>(
+          `/api/push/test?user_id=${encodeURIComponent(userId)}`
+        );
+      }
       if (!res.ok) {
         return { success: false, message: res.error || 'Falha ao enviar teste.' };
       }
@@ -342,11 +348,16 @@ class PushManagerService {
 
   public async syncReminders(userId: string, lembretes: any[]): Promise<void> {
     try {
-      await safeFetchJson('/api/reminders/sync', {
+      const res = await safeFetchJson('/api/reminders/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, lembretes }),
       });
+      if (!res.ok) {
+        await safeFetchJson(
+          `/api/reminders/sync?user_id=${encodeURIComponent(userId)}&lembretes=${encodeURIComponent(JSON.stringify(lembretes))}`
+        );
+      }
     } catch {
       // Non-blocking sync
     }

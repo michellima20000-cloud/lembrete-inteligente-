@@ -3,6 +3,14 @@
     "test": [
       {
         "endpoint": "https://fcm.googleapis.com/fcm/send/xyz"
+      },
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc"
+      }
+    ],
+    "test_user": [
+      {
+        "endpoint": "https://fcm.googleapis.com/test"
       }
     ]
   },

@@ -18,6 +18,17 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '25mb' }));
 
+// CORS & Preflight OPTIONS handler to prevent 405 Method Not Allowed on cross-origin/PWA requests
+app.use((req: Request, res: Response, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 // Initialize persistent VAPID keys for Web Push Notifications
 const VAPID_FILE = path.join(__dirname, '.vapid-keys.json');
 let vapidKeys: { publicKey: string; privateKey: string };
@@ -434,11 +445,25 @@ app.all(['/api/push/vapid-public-key', '/api/push/vapid-public-key/'], (_req: Re
   });
 });
 
-// 2. Register / Update Push Subscription for authenticated user
-app.post(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Response) => {
+// 2. Register / Update Push Subscription for authenticated user (supports POST and GET query fallback)
+app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  const { user_id, subscription } = req.body || {};
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  let user_id = req.body?.user_id || (req.query.user_id as string);
+  let subscription = req.body?.subscription;
+
+  if (!subscription && req.query.subscription) {
+    try {
+      subscription = JSON.parse(decodeURIComponent(req.query.subscription as string));
+    } catch {}
+  }
+
+  // If request has no payload (e.g. simple check or preflight), return success status
   if (!user_id || !subscription || !subscription.endpoint) {
+    if (req.method === 'GET') {
+      return res.json({ status: 'sucesso', mensagem: 'Endpoint push ativo e aguardando requisições.' });
+    }
     return res.status(400).json({
       status: 'erro',
       mensagem: 'user_id e subscription válidos são obrigatórios.',
@@ -460,9 +485,11 @@ app.post(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Re
 });
 
 // 3. Unsubscribe push
-app.post(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res: Response) => {
+app.all(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  const { user_id, endpoint } = req.body || {};
+  const user_id = req.body?.user_id || (req.query.user_id as string);
+  const endpoint = req.body?.endpoint || (req.query.endpoint as string);
+
   if (user_id && endpoint) {
     const existing = userPushSubscriptions.get(user_id) || [];
     const filtered = existing.filter((s) => s.endpoint !== endpoint);
@@ -473,9 +500,11 @@ app.post(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res
 });
 
 // 4. Test Background Push Notification
-app.post(['/api/push/test', '/api/push/test/'], async (req: Request, res: Response) => {
+app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  const { user_id } = req.body;
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  const user_id = req.body?.user_id || (req.query.user_id as string);
   if (!user_id) {
     return res.status(400).json({ status: 'erro', mensagem: 'user_id obrigatório.' });
   }
@@ -524,10 +553,23 @@ app.post(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respon
 });
 
 // 5. Sync active reminders to server store so server scheduler can wake background devices
-app.post(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Response) => {
+app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  const { user_id, lembretes } = req.body || {};
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  let user_id = req.body?.user_id || (req.query.user_id as string);
+  let lembretes = req.body?.lembretes;
+
+  if (!lembretes && req.query.lembretes) {
+    try {
+      lembretes = JSON.parse(decodeURIComponent(req.query.lembretes as string));
+    } catch {}
+  }
+
   if (!user_id || !Array.isArray(lembretes)) {
+    if (req.method === 'GET') {
+      return res.json({ status: 'sucesso', count: (userLembretes.get(user_id || '') || []).length });
+    }
     return res.status(400).json({ status: 'erro', mensagem: 'user_id e lista de lembretes são obrigatórios.' });
   }
 
