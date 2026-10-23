@@ -257,7 +257,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 3. Fallback error message
-    setAuthError('Senha incorreta para esta conta ou erro na conexão. Toque no ícone de olho para conferir sua senha ou entre com 1 clique pelo Google.');
+    setAuthError('Senha incorreta para esta conta ou erro na conexão. Toque no ícone de olho para conferir a senha digitada.');
     throw new Error('Falha na autenticação.');
   };
 
@@ -342,7 +342,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setAuthError('Não foi possível cadastrar no momento. Verifique sua conexão ou entre diretamente com 1 clique pelo Google.');
+    setAuthError('Não foi possível cadastrar no momento. Verifique seus dados e tente novamente.');
     throw new Error('Falha no cadastro.');
   };
 

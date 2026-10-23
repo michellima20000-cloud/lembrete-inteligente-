@@ -366,7 +366,7 @@ app.all(['/api/auth/reset', '/api/auth/reset/'], (req: Request, res: Response) =
 
   return res.json({
     status: 'sucesso',
-    mensagem: `Instruções de redefinição processadas para ${cleanEmail}. Você também pode entrar com 1 clique pelo Google!`,
+    mensagem: `Instruções de redefinição processadas para ${cleanEmail}.`,
   });
 });
 
