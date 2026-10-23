@@ -58,116 +58,6 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const triggeredIdsRef = useRef<Set<string>>(new Set());
 
-  // Check notification permission and initialize PushManager
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      setNotificationPermission(Notification.permission);
-    }
-
-    pushManager.init();
-
-    pushManager.getExistingSubscription().then((sub) => {
-      setIsPushSubscribed(!!sub);
-      if (currentUser?.id) {
-        if (sub) {
-          fetch('/api/push/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              user_id: currentUser.id,
-              subscription: sub.toJSON(),
-            }),
-          }).catch(() => {});
-        } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          pushManager.subscribeToPush(currentUser.id).then((res) => {
-            if (res.success) setIsPushSubscribed(true);
-          }).catch(() => {});
-        }
-      }
-    });
-
-    // Listen to push alarm signals from service worker
-    const unsubscribePushAlarm = pushManager.onAlarmTriggered((reminderId) => {
-      soundAlert.startRingingAlarm();
-      if (reminderId) {
-        setReminders((currentList) => {
-          const found = currentList.find((r) => r.id === reminderId);
-          if (found) {
-            setActiveAlarmReminder(found);
-          }
-          return currentList;
-        });
-      }
-    });
-
-    // Check if app was opened via notification with ?alarm_reminder_id=
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const alarmReminderId = urlParams.get('alarm_reminder_id');
-      if (alarmReminderId) {
-        soundAlert.startRingingAlarm();
-        setReminders((currentList) => {
-          const found = currentList.find((r) => r.id === alarmReminderId);
-          if (found) {
-            setActiveAlarmReminder(found);
-          }
-          return currentList;
-        });
-        window.history.replaceState({}, '', '/');
-      }
-    }
-
-    return () => {
-      unsubscribePushAlarm();
-    };
-  }, [currentUser?.id]);
-
-  const requestNotificationPermission = async (): Promise<boolean> => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      return false;
-    }
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
-      if (permission === 'granted' && currentUser?.id) {
-        subscribePush().catch(() => {});
-      }
-      return permission === 'granted';
-    } catch (e) {
-      console.warn('Could not request notification permission:', e);
-      return false;
-    }
-  };
-
-  const subscribePush = async () => {
-    if (!currentUser?.id) {
-      return { success: false, message: 'Usuário não autenticado.' };
-    }
-    const res = await pushManager.subscribeToPush(currentUser.id);
-    if (res.success) {
-      setIsPushSubscribed(true);
-      setNotificationPermission('granted');
-      pushManager.syncReminders(currentUser.id, reminders);
-    }
-    return res;
-  };
-
-  const testPushNotification = async () => {
-    if (!currentUser?.id) {
-      return { success: false, message: 'Usuário não autenticado.' };
-    }
-    return await pushManager.testPush(currentUser.id);
-  };
-
-  const unsubscribePush = async () => {
-    if (!currentUser?.id) return false;
-    const ok = await pushManager.unsubscribeFromPush(currentUser.id);
-    if (ok) {
-      setIsPushSubscribed(false);
-    }
-    return ok;
-  };
-
   // Helper to load isolated partition
   const loadLocalPartition = useCallback((userId: string): Lembrete[] => {
     try {
@@ -222,6 +112,124 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsLoading(false);
     }
   }, [currentUser?.id, loadLocalPartition, saveLocalPartition]);
+
+  // Check notification permission and initialize PushManager
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+
+    pushManager.init();
+
+    pushManager.getExistingSubscription().then((sub) => {
+      setIsPushSubscribed(!!sub);
+      if (currentUser?.id) {
+        if (sub) {
+          fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: currentUser.id,
+              subscription: sub.toJSON(),
+            }),
+          }).catch(() => {});
+        } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          pushManager.subscribeToPush(currentUser.id).then((res) => {
+            if (res.success) setIsPushSubscribed(true);
+          }).catch(() => {});
+        }
+      }
+    });
+
+    // Listen to push alarm signals from service worker
+    const unsubscribePushAlarm = pushManager.onAlarmTriggered((reminderId) => {
+      soundAlert.startRingingAlarm();
+      if (reminderId) {
+        setReminders((currentList) => {
+          const found = currentList.find((r) => r.id === reminderId);
+          if (found) {
+            setActiveAlarmReminder(found);
+          }
+          return currentList;
+        });
+      }
+    });
+
+    // Listen to snooze actions dispatched directly from lock screen / service worker
+    const unsubscribeSnooze = pushManager.onAlarmSnoozed((reminderId) => {
+      soundAlert.stopRingingAlarm();
+      setActiveAlarmReminder((current) => (current?.id === reminderId ? null : current));
+      fetchReminders().catch(() => {});
+    });
+
+    // Check if app was opened via notification with ?alarm_reminder_id=
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const alarmReminderId = urlParams.get('alarm_reminder_id');
+      if (alarmReminderId) {
+        soundAlert.startRingingAlarm();
+        setReminders((currentList) => {
+          const found = currentList.find((r) => r.id === alarmReminderId);
+          if (found) {
+            setActiveAlarmReminder(found);
+          }
+          return currentList;
+        });
+        window.history.replaceState({}, '', '/');
+      }
+    }
+
+    return () => {
+      unsubscribePushAlarm();
+      unsubscribeSnooze();
+    };
+  }, [currentUser?.id, fetchReminders]);
+
+  const requestNotificationPermission = async (): Promise<boolean> => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return false;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === 'granted' && currentUser?.id) {
+        subscribePush().catch(() => {});
+      }
+      return permission === 'granted';
+    } catch (e) {
+      console.warn('Could not request notification permission:', e);
+      return false;
+    }
+  };
+
+  const subscribePush = async () => {
+    if (!currentUser?.id) {
+      return { success: false, message: 'Usuário não autenticado.' };
+    }
+    const res = await pushManager.subscribeToPush(currentUser.id);
+    if (res.success) {
+      setIsPushSubscribed(true);
+      setNotificationPermission('granted');
+      pushManager.syncReminders(currentUser.id, reminders);
+    }
+    return res;
+  };
+
+  const testPushNotification = async () => {
+    if (!currentUser?.id) {
+      return { success: false, message: 'Usuário não autenticado.' };
+    }
+    return await pushManager.testPush(currentUser.id);
+  };
+
+  const unsubscribePush = async () => {
+    if (!currentUser?.id) return false;
+    const ok = await pushManager.unsubscribeFromPush(currentUser.id);
+    if (ok) {
+      setIsPushSubscribed(false);
+    }
+    return ok;
+  };
 
   // Firestore Realtime Listener for active user's subcollection
   useEffect(() => {

@@ -13,10 +13,12 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 type AlarmTriggerCallback = (reminderId?: string) => void;
+type SnoozeCallback = (reminderId?: string) => void;
 
 class PushManagerService {
   private registration: ServiceWorkerRegistration | null = null;
   private alarmListeners: Set<AlarmTriggerCallback> = new Set();
+  private snoozeListeners: Set<SnoozeCallback> = new Set();
   private isInitializing = false;
 
   constructor() {
@@ -35,10 +37,15 @@ class PushManagerService {
     this.isInitializing = true;
 
     try {
-      // Register standard service worker with broad scope
+      // Register standard service worker with root scope
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       this.registration = reg;
       console.log('[PushManager] Service Worker registrado com escopo:', reg.scope);
+
+      // Check for updates
+      try {
+        reg.update();
+      } catch {}
 
       // Listen for background push message signals from service worker
       navigator.serviceWorker.addEventListener('message', (event) => {
@@ -46,6 +53,9 @@ class PushManagerService {
         if (event.data.type === 'TRIGGER_ALARM' || event.data.type === 'PUSH_ALARM_RECEIVED') {
           console.log('[PushManager] Sinal de alarme recebido do Service Worker:', event.data);
           this.alarmListeners.forEach((cb) => cb(event.data.reminderId));
+        } else if (event.data.type === 'ALARM_SNOOZED') {
+          console.log('[PushManager] Sinal de alarme adiado recebido do Service Worker:', event.data);
+          this.snoozeListeners.forEach((cb) => cb(event.data.reminderId));
         }
       });
 
@@ -65,6 +75,13 @@ class PushManagerService {
       'PushManager' in window &&
       'Notification' in window
     );
+  }
+
+  public getNotificationPermission(): NotificationPermission {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return 'denied';
+    }
+    return Notification.permission;
   }
 
   public async getExistingSubscription(): Promise<PushSubscription | null> {
@@ -88,7 +105,7 @@ class PushManagerService {
     }
 
     try {
-      // 1. Request notification permission
+      // 1. Request notification permission via user gesture
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         return {
@@ -122,13 +139,31 @@ class PushManagerService {
 
       const applicationServerKey = urlBase64ToUint8Array(vapidJson.publicKey);
 
-      // 4. Subscribe to PushManager
-      let subscription = await reg.pushManager.getSubscription();
-      if (!subscription) {
+      // 4. Subscribe to PushManager (with auto-renewal if existing key is outdated)
+      let subscription: PushSubscription | null = null;
+      try {
+        subscription = await reg.pushManager.getSubscription();
+        if (!subscription) {
+          subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: applicationServerKey as unknown as BufferSource,
+          });
+        }
+      } catch (subErr) {
+        console.warn('[PushManager] Tentativa direta falhou, renovando inscrição:', subErr);
+        if (subscription) {
+          try {
+            await subscription.unsubscribe();
+          } catch {}
+        }
         subscription = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: applicationServerKey as unknown as BufferSource,
         });
+      }
+
+      if (!subscription) {
+        throw new Error('Não foi possível obter uma inscrição push válida do navegador.');
       }
 
       // 5. Send subscription to backend linked to user_id
@@ -146,6 +181,17 @@ class PushManagerService {
       if (!saveRes.ok || saveJson.status === 'erro') {
         throw new Error(saveJson.mensagem || 'Falha ao salvar inscrição no servidor.');
       }
+
+      // 6. Auto-sync user's active reminders so background runner starts monitoring immediately
+      try {
+        const saved = localStorage.getItem(`lembretes_isolated_${userId}`);
+        if (saved) {
+          const items = JSON.parse(saved);
+          if (Array.isArray(items) && items.length > 0) {
+            await this.syncReminders(userId, items);
+          }
+        }
+      } catch {}
 
       return {
         success: true,
@@ -214,6 +260,13 @@ class PushManagerService {
     this.alarmListeners.add(callback);
     return () => {
       this.alarmListeners.delete(callback);
+    };
+  }
+
+  public onAlarmSnoozed(callback: SnoozeCallback): () => void {
+    this.snoozeListeners.add(callback);
+    return () => {
+      this.snoozeListeners.delete(callback);
     };
   }
 }

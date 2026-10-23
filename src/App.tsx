@@ -8,6 +8,7 @@ import { ActiveAlarmModal } from './components/ActiveAlarmModal';
 import { ManualAddModal } from './components/ManualAddModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LoginScreen } from './components/LoginScreen';
+import { PushNotificationBanner } from './components/PushNotificationBanner';
 
 function MainApp() {
   const { isAuthenticated, isAuthReady } = useUser();
@@ -38,7 +39,10 @@ function MainApp() {
       <Header />
 
       {/* Main Container */}
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-4 sm:py-6">
+      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-4 sm:py-6 space-y-4">
+        {/* Push Notifications Activation / Status Banner */}
+        <PushNotificationBanner />
+
         {/* Voice and Text AI Brain Input */}
         <VoiceAndTextInput onOpenManualModal={() => setShowManualModal(true)} />
 
