@@ -28,54 +28,49 @@ async function safeFetchJson<T = any>(
     const res = await fetch(url, {
       ...options,
       headers: {
-        Accept: 'application/json',
+        Accept: 'application/json, text/plain, */*',
         ...(options?.headers || {}),
       },
     });
 
-    // 1. Try native res.json()
-    try {
-      const data = await res.json();
-      return {
-        ok: res.ok,
-        data,
-        status: res.status,
-        error: !res.ok ? data?.mensagem || `Erro no servidor (${res.status}).` : undefined,
-      };
-    } catch {
-      // 2. If direct JSON parse failed, try parsing text as JSON
-      const text = await res.text().catch(() => '');
+    // 1. Any HTTP status 200..299 is GUARANTEED to be successful
+    if (res.ok) {
+      let data: any = { status: 'sucesso', mensagem: 'Operação realizada com sucesso.' };
       try {
-        const parsed = JSON.parse(text);
-        return {
-          ok: res.ok,
-          data: parsed,
-          status: res.status,
-          error: !res.ok ? parsed?.mensagem || `Erro no servidor (${res.status}).` : undefined,
-        };
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = { status: 'sucesso', text };
+          }
+        }
       } catch {
-        // If HTTP status is 200 OK, treat as successful response
-        if (res.ok) {
-          return {
-            ok: true,
-            data: { status: 'sucesso', mensagem: 'Operação realizada com sucesso.' } as unknown as T,
-            status: res.status,
-          };
-        }
-        if (res.status === 405) {
-          return {
-            ok: false,
-            status: 405,
-            error: 'Método bloqueado por proxy móvel (405).',
-          };
-        }
-        return {
-          ok: false,
-          status: res.status,
-          error: `Falha na comunicação com o servidor (${res.status}).`,
-        };
+        // Fallback already assigned
       }
+
+      return {
+        ok: true,
+        data: data as T,
+        status: res.status,
+      };
     }
+
+    // 2. Non-2xx HTTP status (4xx, 5xx)
+    let errorMsg = `Erro no servidor (${res.status}).`;
+    try {
+      const text = await res.text();
+      const parsed = JSON.parse(text);
+      if (parsed?.mensagem) {
+        errorMsg = parsed.mensagem;
+      }
+    } catch {}
+
+    return {
+      ok: false,
+      status: res.status,
+      error: errorMsg,
+    };
   } catch (err: any) {
     console.warn(`[PushManager] Erro de rede ao requisitar ${url}:`, err);
     return {
