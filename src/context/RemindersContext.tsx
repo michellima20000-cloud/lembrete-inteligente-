@@ -281,15 +281,16 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [currentUser?.id, fetchReminders, saveLocalPartition]);
 
   // Send Background Notification via Service Worker (Android Chrome / PWA) or Notification API
-  const triggerPushNotification = async (item: Lembrete) => {
+  const triggerPushNotification = async (item: Lembrete, isAntecedencia = false) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
 
-    const title = `⏰ ALARME: ${item.titulo}`;
-    const body =
-      item.antecedencia_minutos > 0
-        ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso!`
-        : `Horário do compromisso alcançado: ${item.titulo}!`;
+    const title = isAntecedencia
+      ? `⏰ AVISO PRÉVIO: ${item.titulo}`
+      : `⏰ ALARME: ${item.titulo}`;
+    const body = isAntecedencia
+      ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso!`
+      : `Horário do compromisso alcançado: ${item.titulo}!`;
 
     // 1. Android Chrome / PWA Service Worker notification (Supports vibration & background wake)
     if ('serviceWorker' in navigator) {
@@ -300,7 +301,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             body,
             icon: '/icon-192.png',
             badge: '/icon-192.png',
-            tag: item.id,
+            tag: `${item.id}_${isAntecedencia ? 'ant' : 'exec'}`,
             renotify: true,
             requireInteraction: true,
             vibrate: [600, 200, 600, 200, 600, 200, 800],
@@ -319,7 +320,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         body,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        tag: item.id,
+        tag: `${item.id}_${isAntecedencia ? 'ant' : 'exec'}`,
         requireInteraction: true,
       } as any);
       notif.onclick = () => {
@@ -337,20 +338,35 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     reminders.forEach((item) => {
       if (item.status_tarefa === 'concluído') return;
 
-      const targetTime = new Date(item.data_hora_execucao).getTime();
-      const antecedenciaMs = (item.antecedencia_minutos || 0) * 60 * 1000;
-      const triggerTime = targetTime - antecedenciaMs;
+      let targetTime = Number(item.timestamp_execucao);
+      if (!targetTime || isNaN(targetTime)) {
+        targetTime = new Date(item.data_hora_execucao).getTime();
+      }
+      if (!targetTime || isNaN(targetTime)) return;
 
-      const diff = nowMs - triggerTime;
-      const triggerKey = `${item.id}_${item.data_hora_execucao}`;
+      const antMin = item.antecedencia_minutos || 0;
 
-      // Alarm if due and hasn't triggered yet (tolerant up to 24 hours of background/sleep)
-      if (diff >= 0 && diff < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(triggerKey)) {
-        triggeredIdsRef.current.add(triggerKey);
+      // 1. Antecedência notification (if configured and due)
+      if (antMin > 0) {
+        const antTriggerTime = targetTime - antMin * 60 * 1000;
+        const diffAnt = nowMs - antTriggerTime;
+        const antKey = `ant_${item.id}_${antMin}_${item.data_hora_execucao}`;
+        if (diffAnt >= 0 && diffAnt < 15 * 60 * 1000 && !triggeredIdsRef.current.has(antKey)) {
+          triggeredIdsRef.current.add(antKey);
+          soundAlert.startRingingAlarm();
+          setActiveAlarmReminder(item);
+          triggerPushNotification(item, true);
+        }
+      }
 
+      // 2. Exact Execution Time alarm (when time arrives)
+      const diffExec = nowMs - targetTime;
+      const execKey = `exec_${item.id}_${item.data_hora_execucao}`;
+      if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(execKey)) {
+        triggeredIdsRef.current.add(execKey);
         soundAlert.startRingingAlarm();
         setActiveAlarmReminder(item);
-        triggerPushNotification(item);
+        triggerPushNotification(item, false);
       }
     });
   }, [reminders]);
@@ -448,13 +464,18 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Calculate new execution time
     const existing = reminders.find((r) => r.id === id);
-    const base = Math.max(Date.now(), existing ? new Date(existing.data_hora_execucao).getTime() : Date.now());
-    const newExecTime = new Date(base + minutes * 60 * 1000).toISOString().slice(0, 19);
+    const currentMs = existing ? (Number(existing.timestamp_execucao) || new Date(existing.data_hora_execucao).getTime()) : Date.now();
+    const base = Math.max(Date.now(), currentMs);
+    const newTargetMs = base + minutes * 60 * 1000;
+    const newExec = new Date(newTargetMs);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const newExecTime = `${newExec.getFullYear()}-${pad(newExec.getMonth() + 1)}-${pad(newExec.getDate())}T${pad(newExec.getHours())}:${pad(newExec.getMinutes())}:${pad(newExec.getSeconds())}`;
 
     if (existing) {
       const updatedItem: Lembrete = {
         ...existing,
         data_hora_execucao: newExecTime,
+        timestamp_execucao: newTargetMs,
         status_tarefa: 'adiado',
         adiado_vezes: (existing.adiado_vezes || 0) + 1,
       };
@@ -576,6 +597,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             user_id: effectiveUserId,
             texto: params.texto,
             currentLocalTime: localIso,
+            referenceTimestamp: now.getTime(),
+            timezoneOffsetMinutes: now.getTimezoneOffset(),
             fusoHorario: Intl.DateTimeFormat().resolvedOptions().timeZone,
             antecedencia_padrao: params.antecedenciaPadrao || 0,
           }),
@@ -611,6 +634,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const parsed = parseReminderCommand({
           texto: params.texto || '',
           referenceTime: localIso,
+          referenceTimestamp: now.getTime(),
+          timezoneOffsetMinutes: now.getTimezoneOffset(),
           user_id: effectiveUserId,
           antecedencia_padrao: params.antecedenciaPadrao || 0,
         });
@@ -641,6 +666,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           user_id: effectiveUserId,
           titulo: data.lembrete.titulo,
           data_hora_execucao: data.lembrete.data_hora_execucao,
+          timestamp_execucao: data.lembrete.timestamp_execucao || new Date(data.lembrete.data_hora_execucao).getTime(),
+          timezone_offset_minutes: data.lembrete.timezone_offset_minutes ?? now.getTimezoneOffset(),
           antecedencia_minutos: data.lembrete.antecedencia_minutos || 0,
           status_tarefa: data.lembrete.status_tarefa,
           categoria: data.lembrete.categoria,
@@ -678,11 +705,14 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!currentUser?.id) return;
 
     const newId = 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const calculatedTs = new Date(data.data_hora_execucao).getTime();
     const fullItem: Lembrete = {
       id: newId,
       user_id: currentUser.id,
       titulo: data.titulo.trim(),
       data_hora_execucao: data.data_hora_execucao,
+      timestamp_execucao: !isNaN(calculatedTs) ? calculatedTs : Date.now(),
+      timezone_offset_minutes: new Date().getTimezoneOffset(),
       antecedencia_minutos: Number(data.antecedencia_minutos) || 0,
       status_tarefa: 'pendente',
       categoria: data.categoria || 'Geral',

@@ -65,12 +65,15 @@ export interface Lembrete {
   user_id: string;
   titulo: string;
   data_hora_execucao: string; // ISO AAAA-MM-DDTHH:MM:SS
+  timestamp_execucao?: number; // Absolute UTC Epoch Milliseconds
+  timezone_offset_minutes?: number; // Timezone offset in minutes
   antecedencia_minutos: number; // 0, 5, 10, 15, 30
   status_tarefa: 'pendente' | 'concluído' | 'adiado';
   categoria?: string;
   urgencia?: 'baixa' | 'media' | 'alta';
   criado_em: string;
   adiado_vezes?: number;
+  notificado_em?: number;
 }
 
 export interface UserProfile {
@@ -180,7 +183,17 @@ app.get('/api/reminders', (req: Request, res: Response) => {
 
 // API: Save Reminder for authenticated user
 app.post('/api/reminders', (req: Request, res: Response) => {
-  const { user_id, titulo, data_hora_execucao, antecedencia_minutos, categoria, urgencia } = req.body;
+  const {
+    user_id,
+    titulo,
+    data_hora_execucao,
+    antecedencia_minutos,
+    categoria,
+    urgencia,
+    timestamp_execucao,
+    timezone_offset_minutes,
+  } = req.body;
+
   if (!user_id || !titulo || !data_hora_execucao) {
     return res.status(400).json({
       status: 'erro',
@@ -188,11 +201,18 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     });
   }
 
+  const calculatedTs = timestamp_execucao
+    ? Number(timestamp_execucao)
+    : new Date(data_hora_execucao).getTime();
+
   const newReminder: Lembrete = {
     id: 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
     user_id,
     titulo: titulo.trim(),
     data_hora_execucao,
+    timestamp_execucao: !isNaN(calculatedTs) ? calculatedTs : Date.now(),
+    timezone_offset_minutes:
+      timezone_offset_minutes !== undefined ? Number(timezone_offset_minutes) : undefined,
     antecedencia_minutos: Number(antecedencia_minutos) || 0,
     status_tarefa: 'pendente',
     categoria: categoria || 'Geral',
@@ -231,7 +251,16 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
   }
 
   const item = list[index];
-  const { status_tarefa, data_hora_execucao, antecedencia_minutos, adiar_minutos, titulo, categoria, urgencia } = req.body;
+  const {
+    status_tarefa,
+    data_hora_execucao,
+    antecedencia_minutos,
+    adiar_minutos,
+    titulo,
+    categoria,
+    urgencia,
+    timestamp_execucao,
+  } = req.body;
 
   if (status_tarefa) {
     item.status_tarefa = status_tarefa;
@@ -239,14 +268,18 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
 
   if (adiar_minutos) {
     const min = Number(adiar_minutos) || 10;
-    const currentExecTime = new Date(item.data_hora_execucao).getTime();
+    const currentExecTime = Number(item.timestamp_execucao) || new Date(item.data_hora_execucao).getTime();
     const baseTime = currentExecTime > Date.now() ? currentExecTime : Date.now();
-    const newExec = new Date(baseTime + min * 60 * 1000);
-    item.data_hora_execucao = newExec.toISOString().slice(0, 19);
+    const newExecTime = baseTime + min * 60 * 1000;
+    const newExec = new Date(newExecTime);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    item.data_hora_execucao = `${newExec.getFullYear()}-${pad(newExec.getMonth() + 1)}-${pad(newExec.getDate())}T${pad(newExec.getHours())}:${pad(newExec.getMinutes())}:${pad(newExec.getSeconds())}`;
+    item.timestamp_execucao = newExecTime;
     item.status_tarefa = 'adiado';
     item.adiado_vezes = (item.adiado_vezes || 0) + 1;
   } else if (data_hora_execucao) {
     item.data_hora_execucao = data_hora_execucao;
+    item.timestamp_execucao = timestamp_execucao ? Number(timestamp_execucao) : new Date(data_hora_execucao).getTime();
   }
 
   if (antecedencia_minutos !== undefined) {
@@ -293,7 +326,15 @@ app.delete('/api/reminders/:id', (req: Request, res: Response) => {
 
 // API: Natural Language Reminder Parser
 app.post('/api/lembrete/parse', (req: Request, res: Response) => {
-  const { user_id, texto, currentLocalTime, antecedencia_padrao } = req.body;
+  const {
+    user_id,
+    texto,
+    currentLocalTime,
+    referenceTimestamp,
+    timezoneOffsetMinutes,
+    timezone_offset_minutes,
+    antecedencia_padrao,
+  } = req.body;
 
   if (!user_id) {
     return res.status(400).json({
@@ -310,11 +351,15 @@ app.post('/api/lembrete/parse', (req: Request, res: Response) => {
   }
 
   const referenceTime = currentLocalTime || new Date().toISOString();
+  const effectiveRefTimestamp = referenceTimestamp ? Number(referenceTimestamp) : Date.now();
+  const effectiveOffset = timezone_offset_minutes !== undefined ? Number(timezone_offset_minutes) : (timezoneOffsetMinutes !== undefined ? Number(timezoneOffsetMinutes) : undefined);
 
   // Process text deterministically via shared parser
   const parsedData = parseReminderCommand({
     texto: texto.trim(),
     referenceTime,
+    referenceTimestamp: effectiveRefTimestamp,
+    timezoneOffsetMinutes: effectiveOffset,
     user_id,
     antecedencia_padrao,
   });
@@ -334,6 +379,8 @@ app.post('/api/lembrete/parse', (req: Request, res: Response) => {
     user_id,
     titulo: parsedData.lembrete.titulo,
     data_hora_execucao: parsedData.lembrete.data_hora_execucao,
+    timestamp_execucao: parsedData.lembrete.timestamp_execucao,
+    timezone_offset_minutes: parsedData.lembrete.timezone_offset_minutes,
     antecedencia_minutos: Number(parsedData.lembrete.antecedencia_minutos) || 0,
     status_tarefa: 'pendente',
     categoria: parsedData.lembrete.categoria,
@@ -600,9 +647,65 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 });
 
 // 6. SERVER-SIDE BACKGROUND ALARM RUNNER
-// Scans all registered users every 2.5 seconds.
+// Scans all registered users every 2 seconds.
 // Fires real Web Push notifications even if the browser is closed or phone is locked!
 const serverTriggeredReminders = new Set<string>();
+
+async function sendBackgroundPushNotification(
+  reminder: Lembrete,
+  userId: string,
+  subscriptions: webpush.PushSubscription[],
+  isAntecedencia: boolean
+) {
+  if (subscriptions.length === 0) return;
+
+  const antMin = reminder.antecedencia_minutos || 0;
+  const title = isAntecedencia
+    ? `⏰ AVISO PRÉVIO: ${reminder.titulo}`
+    : `⏰ ALARME: ${reminder.titulo}`;
+
+  const body = isAntecedencia
+    ? `Atenção: faltam ${antMin} minutos para seu compromisso "${reminder.titulo}"!`
+    : `Chegou o horário do seu compromisso: ${reminder.titulo}!`;
+
+  console.log(`[Server Background Alarm] Disparando push (${isAntecedencia ? 'antecedência' : 'horário exato'}) para: "${reminder.titulo}" (${reminder.id})`);
+
+  const payload = JSON.stringify({
+    title,
+    body,
+    tag: `${reminder.id}_${isAntecedencia ? 'ant' : 'exec'}`,
+    reminderId: reminder.id,
+    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    requireInteraction: true,
+    url: `/?alarm_reminder_id=${reminder.id}`,
+    isAntecedencia,
+  });
+
+  const pushOptions: webpush.RequestOptions = {
+    TTL: 0,
+    urgency: 'high',
+    headers: {
+      Urgency: 'high',
+      TTL: '0',
+    },
+  };
+
+  const activeSubs: webpush.PushSubscription[] = [];
+  for (const sub of subscriptions) {
+    try {
+      await webpush.sendNotification(sub, payload, pushOptions);
+      activeSubs.push(sub);
+    } catch (err: any) {
+      console.warn('[WebPush] Falha ao enviar alarme push:', err?.statusCode || err?.message);
+      if (err?.statusCode !== 404 && err?.statusCode !== 410) {
+        activeSubs.push(sub);
+      }
+    }
+  }
+
+  userPushSubscriptions.set(userId, activeSubs);
+  saveCache();
+}
 
 setInterval(async () => {
   const now = Date.now();
@@ -613,76 +716,49 @@ setInterval(async () => {
     for (const reminder of remindersList) {
       if (reminder.status_tarefa === 'concluído') continue;
 
-      // Conversão resiliente e neutra da data/hora ISO ignorando distorções de fuso horário entre o servidor (UTC) e o celular do usuário (Brasil)
-      let execTime = 0;
-      let rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
-      if (rawIso) {
-        if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
-          execTime = new Date(rawIso).getTime();
-        } else {
-          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(rawIso)) {
-            rawIso += ':00';
+      // Resilient resolution of execution timestamp
+      let execTime = Number(reminder.timestamp_execucao);
+      if (!execTime || isNaN(execTime)) {
+        let rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
+        if (rawIso) {
+          if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
+            execTime = new Date(rawIso).getTime();
+          } else if (typeof reminder.timezone_offset_minutes === 'number') {
+            const asUtc = new Date(rawIso + 'Z').getTime();
+            execTime = asUtc + reminder.timezone_offset_minutes * 60000;
+          } else {
+            execTime = new Date(rawIso).getTime();
           }
-          // Normaliza strings de horário local para o fuso brasileiro (-03:00)
-          const brasiliaParsed = new Date(`${rawIso}-03:00`).getTime();
-          execTime = !isNaN(brasiliaParsed) ? brasiliaParsed : new Date(rawIso).getTime();
         }
       }
 
+      if (!execTime || isNaN(execTime)) continue;
+
       const antMin = reminder.antecedencia_minutos || 0;
-      const triggerTime = execTime - antMin * 60 * 1000;
 
-      // Check if due: now has passed triggerTime and not yet triggered
-      const diff = now - triggerTime;
-      const triggerKey = `${reminder.id}_${reminder.data_hora_execucao}`;
+      // 1. Antecedência notification (if configured and due)
+      if (antMin > 0) {
+        const antecedenciaTime = execTime - antMin * 60 * 1000;
+        const diffAnt = now - antecedenciaTime;
+        const antKey = `ant_${reminder.id}_${antMin}_${reminder.data_hora_execucao}`;
 
-      // Trigger if due (within the past 24 hours) and not yet sent
-      if (diff >= 0 && diff < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(triggerKey)) {
-        serverTriggeredReminders.add(triggerKey);
-        console.log(`[Server Background Alarm] Disparando alarme para: "${reminder.titulo}" (${reminder.id})`);
-
-        if (subscriptions.length > 0) {
-          const payload = JSON.stringify({
-            title: `⏰ ALARME: ${reminder.titulo}`,
-            body: antMin > 0
-              ? `Aviso com ${antMin}m de antecedência para seu compromisso!`
-              : `Chegou o horário do seu compromisso: ${reminder.titulo}!`,
-            tag: reminder.id,
-            reminderId: reminder.id,
-            vibrate: [600, 200, 600, 200, 600, 200, 800],
-            requireInteraction: true,
-            url: `/?alarm_reminder_id=${reminder.id}`,
-          });
-
-          // Configuração de alta prioridade para acordar smartphones com tela bloqueada
-          const pushOptions: webpush.RequestOptions = {
-            TTL: 0,
-            urgency: 'high',
-            headers: {
-              Urgency: 'high',
-              TTL: '0',
-            },
-          };
-
-          const activeSubs: webpush.PushSubscription[] = [];
-          for (const sub of subscriptions) {
-            try {
-              await webpush.sendNotification(sub, payload, pushOptions);
-              activeSubs.push(sub);
-            } catch (err: any) {
-              console.warn('[WebPush] Falha ao enviar alarme push:', err?.statusCode || err?.message);
-              // Drop expired subscriptions (410 Gone / 404 Not Found)
-              if (err?.statusCode !== 404 && err?.statusCode !== 410) {
-                activeSubs.push(sub);
-              }
-            }
-          }
-          userPushSubscriptions.set(userId, activeSubs);
+        if (diffAnt >= 0 && diffAnt < 15 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+          serverTriggeredReminders.add(antKey);
+          await sendBackgroundPushNotification(reminder, userId, subscriptions, true);
         }
+      }
+
+      // 2. Exact Execution Time alarm (when time arrives)
+      const diffExec = now - execTime;
+      const execKey = `exec_${reminder.id}_${reminder.data_hora_execucao}`;
+
+      if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+        serverTriggeredReminders.add(execKey);
+        await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
       }
     }
   }
-}, 2500);
+}, 2000);
 
 // Setup Vite middlewares in development or static serve in production
 async function startServer() {
