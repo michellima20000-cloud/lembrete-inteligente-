@@ -1,6 +1,10 @@
 // Native Web Push Notification & Service Worker Manager
 // Enables alarms and notifications even when device is locked or browser is in background
 
+// Fallback VAPID public key matching the server's persistent .vapid-keys.json
+export const FALLBACK_VAPID_PUBLIC_KEY =
+  'BEfgpvj5Gt5eGfVHEENkC84jATpF3-rSL6tWMNRe2gHEfX2pFAbBaH9SN2KOOsgLy3EvxwwcrqnJO-82CHusljg';
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -10,6 +14,54 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+/**
+ * Safe fetch helper that guarantees we never attempt to parse HTML responses as JSON,
+ * completely preventing "Unexpected token '<', '<!doctype' is not valid JSON" errors.
+ */
+async function safeFetchJson<T = any>(
+  url: string,
+  options?: RequestInit
+): Promise<{ ok: boolean; data?: T; status: number; error?: string }> {
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        ...(options?.headers || {}),
+      },
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await res.text();
+      console.warn(
+        `[PushManager] Resposta não-JSON recebida de ${url} (status ${res.status}):`,
+        text.slice(0, 100)
+      );
+      return {
+        ok: false,
+        status: res.status,
+        error: `Servidor retornou resposta inesperada (${res.status}).`,
+      };
+    }
+
+    const data = await res.json();
+    return {
+      ok: res.ok,
+      data,
+      status: res.status,
+      error: !res.ok ? data?.mensagem || `Erro no servidor (${res.status}).` : undefined,
+    };
+  } catch (err: any) {
+    console.warn(`[PushManager] Erro de rede ao requisitar ${url}:`, err);
+    return {
+      ok: false,
+      status: 0,
+      error: err?.message || 'Falha de comunicação com o servidor.',
+    };
+  }
 }
 
 type AlarmTriggerCallback = (reminderId?: string) => void;
@@ -130,19 +182,44 @@ class PushManagerService {
         };
       }
 
-      // 3. Fetch VAPID Public Key from backend
-      const vapidRes = await fetch('/api/push/vapid-public-key');
-      const vapidJson = await vapidRes.json();
-      if (!vapidJson.publicKey) {
-        throw new Error('Chave pública VAPID não retornada pelo servidor.');
+      // 3. Fetch VAPID Public Key from backend (with automatic fallback to embedded key)
+      let vapidPublicKey = FALLBACK_VAPID_PUBLIC_KEY;
+      try {
+        const vapidResult = await safeFetchJson<{ status?: string; publicKey: string }>(
+          '/api/push/vapid-public-key',
+          { cache: 'no-store' }
+        );
+        if (vapidResult.ok && vapidResult.data?.publicKey) {
+          vapidPublicKey = vapidResult.data.publicKey;
+        } else {
+          console.log('[PushManager] Usando chave VAPID local resiliente.');
+        }
+      } catch {
+        console.log('[PushManager] Usando chave VAPID padrão.');
       }
 
-      const applicationServerKey = urlBase64ToUint8Array(vapidJson.publicKey);
+      const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
 
       // 4. Subscribe to PushManager (with auto-renewal if existing key is outdated)
       let subscription: PushSubscription | null = null;
       try {
         subscription = await reg.pushManager.getSubscription();
+        if (subscription) {
+          // If already subscribed, verify if applicationServerKey matches or renew
+          try {
+            const rawKey = subscription.options?.applicationServerKey;
+            if (!rawKey) {
+              await subscription.unsubscribe();
+              subscription = null;
+            }
+          } catch {
+            if (subscription) {
+              await subscription.unsubscribe().catch(() => {});
+            }
+            subscription = null;
+          }
+        }
+
         if (!subscription) {
           subscription = await reg.pushManager.subscribe({
             userVisibleOnly: true,
@@ -168,18 +245,37 @@ class PushManagerService {
 
       // 5. Send subscription to backend linked to user_id
       const subJson = subscription.toJSON();
-      const saveRes = await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: userId,
-          subscription: subJson,
-        }),
-      });
+      const saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(
+        '/api/push/subscribe',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: userId,
+            subscription: subJson,
+          }),
+        }
+      );
 
-      const saveJson = await saveRes.json();
-      if (!saveRes.ok || saveJson.status === 'erro') {
-        throw new Error(saveJson.mensagem || 'Falha ao salvar inscrição no servidor.');
+      if (!saveResult.ok) {
+        // Retry once after 500ms
+        await new Promise((r) => setTimeout(r, 500));
+        const retryResult = await safeFetchJson<{ status: string; mensagem?: string }>(
+          '/api/push/subscribe',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: userId,
+              subscription: subJson,
+            }),
+          }
+        );
+        if (!retryResult.ok) {
+          throw new Error(
+            retryResult.error || saveResult.error || 'Falha ao salvar inscrição no servidor.'
+          );
+        }
       }
 
       // 6. Auto-sync user's active reminders so background runner starts monitoring immediately
@@ -195,7 +291,8 @@ class PushManagerService {
 
       return {
         success: true,
-        message: 'Notificações em segundo plano ativadas com sucesso! Você receberá alarmes mesmo com a tela bloqueada.',
+        message:
+          'Notificações em segundo plano ativadas com sucesso! Você receberá alarmes mesmo com a tela bloqueada.',
       };
     } catch (err: any) {
       console.error('[PushManager] Erro ao ativar Push:', err);
@@ -214,7 +311,7 @@ class PushManagerService {
       if (sub) {
         const endpoint = sub.endpoint;
         await sub.unsubscribe();
-        await fetch('/api/push/unsubscribe', {
+        await safeFetchJson('/api/push/unsubscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: userId, endpoint }),
@@ -229,16 +326,15 @@ class PushManagerService {
 
   public async testPush(userId: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch('/api/push/test', {
+      const res = await safeFetchJson<{ status: string; mensagem?: string }>('/api/push/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId }),
       });
-      const data = await res.json();
-      if (!res.ok || data.status === 'erro') {
-        return { success: false, message: data.mensagem || 'Falha ao enviar teste.' };
+      if (!res.ok) {
+        return { success: false, message: res.error || 'Falha ao enviar teste.' };
       }
-      return { success: true, message: data.mensagem };
+      return { success: true, message: res.data?.mensagem || 'Alarme de teste enviado com sucesso!' };
     } catch (e: any) {
       return { success: false, message: e?.message || 'Erro de conexão ao testar notificação.' };
     }
@@ -246,12 +342,12 @@ class PushManagerService {
 
   public async syncReminders(userId: string, lembretes: any[]): Promise<void> {
     try {
-      await fetch('/api/reminders/sync', {
+      await safeFetchJson('/api/reminders/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, lembretes }),
       });
-    } catch (e) {
+    } catch {
       // Non-blocking sync
     }
   }

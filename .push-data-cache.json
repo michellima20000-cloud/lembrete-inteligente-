@@ -1,0 +1,12 @@
+{
+  "userPushSubscriptions": {
+    "test": [
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/xyz"
+      }
+    ]
+  },
+  "userLembretes": {
+    "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": []
+  }
+}

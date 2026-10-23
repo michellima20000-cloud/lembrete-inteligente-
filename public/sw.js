@@ -1,7 +1,7 @@
 // Service Worker entry point for Lembrete Inteligente PWA
 // Imports background push and alarm handlers and caches essential PWA assets
 
-const CACHE_NAME = 'lembrete-inteligente-pwa-v1';
+const CACHE_NAME = 'lembrete-inteligente-pwa-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -31,27 +31,34 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) => {
+        return Promise.all(
+          keys.map((key) => {
+            if (key !== CACHE_NAME) {
+              console.log('[SW] Purgando cache antigo:', key);
+              return caches.delete(key);
+            }
+          })
+        );
+      })
+      .then(() => self.clients.claim())
   );
 });
 
 // Network-first with cache fallback for offline resilience
 self.addEventListener('fetch', (event) => {
+  // Never intercept non-GET requests (e.g. POST /api/push/subscribe)
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
 
-  // Skip API routes, Vite HMR, and external domains from static cache
+  // STRICT PASSTHROUGH: Never intercept or cache any API routes, Vite HMR, or external requests
   if (
-    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/api') ||
+    url.pathname.includes('/api/') ||
+    event.request.url.includes('/api/') ||
     url.pathname.includes('@vite') ||
     url.pathname.includes('token=') ||
     url.origin !== self.location.origin
@@ -71,12 +78,14 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       })
       .catch(() => {
-        // Fallback to cache if offline
+        // Fallback to cache ONLY if offline
         return caches.match(event.request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
+          // Only fallback to index.html for page navigation
+          if (event.request.mode === 'navigate' && event.request.destination === 'document') {
+            return caches.match('/index.html') || caches.match('/');
           }
+          return new Response(null, { status: 404, statusText: 'Offline Not Found' });
         });
       })
   );

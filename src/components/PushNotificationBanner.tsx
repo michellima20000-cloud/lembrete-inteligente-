@@ -39,15 +39,23 @@ export const PushNotificationBanner: React.FC = () => {
     setTestResult(null);
     try {
       const res = await subscribePush();
-      if (res.success) {
+      if (res && res.success) {
         soundAlert.playSuccess();
         setTestResult({
           success: true,
           message: 'Notificações ativadas! Teste abaixo para verificar a vibração e alarme.',
         });
       } else {
-        setTestResult(res);
+        setTestResult(res || {
+          success: false,
+          message: 'Não foi possível ativar as notificações push.',
+        });
       }
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: err?.message || 'Falha ao ativar notificações push.',
+      });
     } finally {
       setIsLoading(false);
     }

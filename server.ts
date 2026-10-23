@@ -424,14 +424,20 @@ app.post('/api/transcribe', async (req: Request, res: Response) => {
 // BACKGROUND WEB PUSH ALARMS ENGINE & ROUTES
 // ==========================================
 
-// 1. Get VAPID Public Key for client subscription
-app.get('/api/push/vapid-public-key', (_req: Request, res: Response) => {
-  res.json({ publicKey: vapidKeys.publicKey });
+// 1. Get VAPID Public Key for client subscription (GET and POST, resilient trailing slash)
+app.all(['/api/push/vapid-public-key', '/api/push/vapid-public-key/'], (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  return res.json({
+    status: 'sucesso',
+    publicKey: vapidKeys.publicKey,
+  });
 });
 
 // 2. Register / Update Push Subscription for authenticated user
-app.post('/api/push/subscribe', (req: Request, res: Response) => {
-  const { user_id, subscription } = req.body;
+app.post(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { user_id, subscription } = req.body || {};
   if (!user_id || !subscription || !subscription.endpoint) {
     return res.status(400).json({
       status: 'erro',
@@ -454,8 +460,9 @@ app.post('/api/push/subscribe', (req: Request, res: Response) => {
 });
 
 // 3. Unsubscribe push
-app.post('/api/push/unsubscribe', (req: Request, res: Response) => {
-  const { user_id, endpoint } = req.body;
+app.post(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { user_id, endpoint } = req.body || {};
   if (user_id && endpoint) {
     const existing = userPushSubscriptions.get(user_id) || [];
     const filtered = existing.filter((s) => s.endpoint !== endpoint);
@@ -466,7 +473,8 @@ app.post('/api/push/unsubscribe', (req: Request, res: Response) => {
 });
 
 // 4. Test Background Push Notification
-app.post('/api/push/test', async (req: Request, res: Response) => {
+app.post(['/api/push/test', '/api/push/test/'], async (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   const { user_id } = req.body;
   if (!user_id) {
     return res.status(400).json({ status: 'erro', mensagem: 'user_id obrigatório.' });
@@ -516,8 +524,9 @@ app.post('/api/push/test', async (req: Request, res: Response) => {
 });
 
 // 5. Sync active reminders to server store so server scheduler can wake background devices
-app.post('/api/reminders/sync', (req: Request, res: Response) => {
-  const { user_id, lembretes } = req.body;
+app.post(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { user_id, lembretes } = req.body || {};
   if (!user_id || !Array.isArray(lembretes)) {
     return res.status(400).json({ status: 'erro', mensagem: 'user_id e lista de lembretes são obrigatórios.' });
   }
@@ -525,6 +534,27 @@ app.post('/api/reminders/sync', (req: Request, res: Response) => {
   userLembretes.set(user_id, lembretes);
   saveCache();
   return res.json({ status: 'sucesso', count: lembretes.length });
+});
+
+// Explicit API 404 boundary: prevents unmatched /api/* requests from falling through to Vite SPA index.html
+app.all(['/api', '/api/*'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  return res.status(404).json({
+    status: 'erro',
+    mensagem: `Endpoint da API não encontrado: ${req.method} ${req.originalUrl}`,
+  });
+});
+
+// JSON error-handling middleware for all API requests
+app.use((err: any, req: Request, res: Response, next: any) => {
+  if (req.originalUrl && req.originalUrl.startsWith('/api')) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(err.status || 500).json({
+      status: 'erro',
+      mensagem: err.message || 'Erro interno no servidor da API.',
+    });
+  }
+  next(err);
 });
 
 // 6. SERVER-SIDE BACKGROUND ALARM RUNNER
