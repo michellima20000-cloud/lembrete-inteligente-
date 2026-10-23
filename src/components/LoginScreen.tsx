@@ -65,6 +65,7 @@ export const LoginScreen: React.FC = () => {
     if (!email.trim() || !password.trim()) return;
 
     setResetSentMessage(null);
+    clearAuthError();
     setIsSubmitting(true);
     try {
       if (mode === 'login') {

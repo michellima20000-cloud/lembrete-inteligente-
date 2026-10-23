@@ -1,0 +1,20 @@
+{
+  "michel.lima123@gmail.com": {
+    "id": "usr_68dd8a516780b021",
+    "email": "michel.lima123@gmail.com",
+    "nome": "Michel",
+    "passwordHash": "a6646a1d8c32779ed5751590b0a737c5abda9ec1ea98a015d654181c51e4af707e7fc7a258a51397fca2bda7c8b0aa55d0f053c8bdedfe0431aed666180b045f",
+    "salt": "30180bc189e2f1e534a951ba454297fd",
+    "avatarCor": "#4f46e5",
+    "criado_em": "2026-10-23T16:56:54.994Z"
+  },
+  "test@example.com": {
+    "id": "usr_55502f40dc8b7c76",
+    "email": "test@example.com",
+    "nome": "Test",
+    "passwordHash": "6c7746717d80cf285e04318dae0a6a5d22f92a4e72994c3f95e2bc1c43bd7e0ca0553f281f453daa366b8f79d182b2b51012fb385689dd68aac2d85d0177a80e",
+    "salt": "aebc207abac373aad0bc79954b765155",
+    "avatarCor": "#4f46e5",
+    "criado_em": "2026-10-23T17:19:42.252Z"
+  }
+}

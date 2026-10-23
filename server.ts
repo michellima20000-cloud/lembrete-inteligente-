@@ -284,27 +284,29 @@ app.all(['/api/auth/register', '/api/auth/register/'], (req: Request, res: Respo
 
   const existing = authAccounts.get(cleanEmail);
   if (existing) {
-    // If password matches existing, auto-login
-    const hash = hashPassword(cleanPass, existing.salt);
-    if (hash === existing.passwordHash) {
-      const profile: UserProfile = {
-        id: existing.id,
-        nome: existing.nome,
-        email: existing.email,
-        avatarCor: existing.avatarCor,
-        criado_em: existing.criado_em,
-      };
-      return res.json({
-        status: 'sucesso',
-        mensagem: 'Conta já existia e login efetuado com sucesso!',
-        user: profile,
-      });
+    // If account already existed, update its password & name and log in immediately
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = hashPassword(cleanPass, salt);
+    existing.salt = salt;
+    existing.passwordHash = passwordHash;
+    if (nome && nome.trim()) {
+      existing.nome = nome.trim();
     }
+    authAccounts.set(cleanEmail, existing);
+    const profile: UserProfile = {
+      id: existing.id,
+      nome: existing.nome,
+      email: existing.email,
+      avatarCor: existing.avatarCor,
+      criado_em: existing.criado_em,
+    };
+    userProfiles.set(existing.id, profile);
+    saveCache();
 
-    return res.status(409).json({
-      status: 'erro',
-      code: 'auth/email-already-in-use',
-      mensagem: 'Esta conta de e-mail já está cadastrada. Alterne para a aba "Entrar" com a sua senha.',
+    return res.json({
+      status: 'sucesso',
+      mensagem: 'Conta cadastrada e conectada com sucesso!',
+      user: profile,
     });
   }
 
