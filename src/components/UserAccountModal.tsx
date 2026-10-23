@@ -3,6 +3,7 @@ import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell,
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 interface UserAccountModalProps {
   onClose: () => void;
@@ -63,7 +64,7 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
 
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            {firebaseUser ? 'Autenticado no Firebase' : 'Modo Convidado / Demonstração'}
+            {firebaseUser ? 'Autenticado no Firebase' : currentUser?.email ? 'Conta Sincronizada' : 'Modo Convidado'}
           </div>
         </div>
 
@@ -117,8 +118,8 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
               <Flame className="w-4 h-4 text-amber-400" />
               Projeto Firebase:
             </span>
-            <span className="font-mono text-amber-200 text-[11px]">
-              lembrete-inteligente-b6cd1
+            <span className="font-mono text-amber-200 text-[11px] truncate max-w-[140px]">
+              {firebaseConfig.projectId || 'gen-lang-client-0682320671'}
             </span>
           </div>
           <div className="flex items-center justify-between text-slate-400 text-[11px]">

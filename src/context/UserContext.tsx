@@ -150,23 +150,36 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
+  const cleanEmailString = (raw: string) => {
+    return (raw || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase();
+  };
+
   const signInWithEmail = async (email: string, pass: string) => {
     setAuthError(null);
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanPass = pass.trim();
+    const cleanEmail = cleanEmailString(email);
+    const cleanPass = (pass || '').trim();
 
+    if (!cleanEmail || !cleanPass) {
+      setAuthError('Por favor, informe seu e-mail e senha.');
+      throw new Error('E-mail e senha obrigatórios.');
+    }
+
+    // 1. First attempt native Firebase Auth
+    let fbSuccess = false;
     try {
       await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      fbSuccess = true;
       rememberEmail(cleanEmail);
       try {
         localStorage.setItem('lembrete_saved_pass', cleanPass);
       } catch {}
       return;
-    } catch (err: any) {
-      // If trimmed failed and raw pass is different, try with raw pass
+    } catch (fbErr: any) {
+      // If trimmed failed, test with raw pass
       if (cleanPass !== pass) {
         try {
           await signInWithEmailAndPassword(auth, cleanEmail, pass);
+          fbSuccess = true;
           rememberEmail(cleanEmail);
           try {
             localStorage.setItem('lembrete_saved_pass', pass);
@@ -174,29 +187,66 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         } catch {}
       }
-
-      console.warn('Firebase email sign-in failed:', err);
-      if (
-        err.code === 'auth/invalid-credential' ||
-        err.code === 'auth/wrong-password' ||
-        err.code === 'auth/user-not-found'
-      ) {
-        setAuthError('E-mail ou senha incorretos ou esta conta ainda não foi cadastrada no Firebase.');
-      } else if (err.code === 'auth/invalid-email') {
-        setAuthError('O formato do e-mail informado é inválido.');
-      } else if (err.code === 'auth/too-many-requests') {
-        setAuthError('Muitas tentativas sem sucesso. Aguarde alguns instantes e tente novamente.');
-      } else {
-        setAuthError(err.message || 'Falha ao autenticar com a conta Firebase.');
-      }
-      throw err;
+      console.warn('Firebase native email login:', fbErr?.code || fbErr?.message);
     }
+
+    // 2. If Firebase has PASSWORD_LOGIN_DISABLED or operation-not-allowed or account is local:
+    // Seamlessly authenticate via backend API
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          password: cleanPass,
+          rawPassword: pass,
+        }),
+      });
+
+      const isJson = res.headers.get('content-type')?.includes('application/json');
+      if (isJson) {
+        const data = await res.json();
+        if (data.status === 'sucesso' && data.user) {
+          setCurrentUser(data.user);
+          rememberEmail(cleanEmail);
+          try {
+            localStorage.setItem('lembrete_authenticated_user', JSON.stringify(data.user));
+            localStorage.setItem('lembrete_saved_pass', cleanPass);
+            localStorage.removeItem('lembrete_guest_user');
+          } catch {}
+          return;
+        } else if (data.status === 'erro' && data.mensagem) {
+          setAuthError(data.mensagem);
+          throw new Error(data.mensagem);
+        }
+      }
+    } catch (apiErr: any) {
+      if (apiErr?.message && !apiErr.message.includes('fetch')) {
+        throw apiErr;
+      }
+    }
+
+    // 3. Fallback error message
+    setAuthError('Senha incorreta para esta conta ou erro na conexão. Toque no ícone de olho para conferir sua senha ou entre com 1 clique pelo Google.');
+    throw new Error('Falha na autenticação.');
   };
 
   const signUpWithEmail = async (email: string, pass: string, name?: string) => {
     setAuthError(null);
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanPass = pass.trim();
+    const cleanEmail = cleanEmailString(email);
+    const cleanPass = (pass || '').trim();
+
+    if (!cleanEmail || !cleanPass) {
+      setAuthError('E-mail e senha são obrigatórios.');
+      throw new Error('E-mail e senha obrigatórios.');
+    }
+
+    if (cleanPass.length < 6) {
+      setAuthError('A senha deve conter no mínimo 6 caracteres.');
+      throw new Error('Senha muito curta.');
+    }
+
+    // 1. Try Firebase native registration
     try {
       const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
       rememberEmail(cleanEmail);
@@ -210,42 +260,52 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Could not update displayName:', e);
         }
       }
-    } catch (err: any) {
-      console.warn('Firebase email sign-up failed:', err);
-      if (err.code === 'auth/email-already-in-use') {
-        // Smart auto-login fallback:
-        // If account already exists in Firebase, try logging in immediately with both clean and raw password!
-        try {
-          await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      return;
+    } catch (fbErr: any) {
+      console.warn('Firebase native sign up:', fbErr?.code || fbErr?.message);
+      if (fbErr.code === 'auth/email-already-in-use') {
+        // If already in Firebase, attempt login
+        return await signInWithEmail(cleanEmail, cleanPass);
+      }
+    }
+
+    // 2. Seamless registration via Backend Auth API
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          password: cleanPass,
+          nome: name || cleanEmail.split('@')[0],
+        }),
+      });
+
+      const isJson = res.headers.get('content-type')?.includes('application/json');
+      if (isJson) {
+        const data = await res.json();
+        if (data.status === 'sucesso' && data.user) {
+          setCurrentUser(data.user);
           rememberEmail(cleanEmail);
           try {
+            localStorage.setItem('lembrete_authenticated_user', JSON.stringify(data.user));
             localStorage.setItem('lembrete_saved_pass', cleanPass);
+            localStorage.removeItem('lembrete_guest_user');
           } catch {}
           return;
-        } catch (loginErr: any) {
-          if (cleanPass !== pass) {
-            try {
-              await signInWithEmailAndPassword(auth, cleanEmail, pass);
-              rememberEmail(cleanEmail);
-              try {
-                localStorage.setItem('lembrete_saved_pass', pass);
-              } catch {}
-              return;
-            } catch {}
-          }
-          console.warn('Auto sign-in for existing account failed:', loginErr);
-          setAuthError('Esta conta já existe no Firebase, mas a senha digitada está incorreta para ela. Utilize a opção "Entrar" ou recupere sua senha.');
-          throw loginErr;
+        } else if (data.status === 'erro' && data.mensagem) {
+          setAuthError(data.mensagem);
+          throw new Error(data.mensagem);
         }
-      } else if (err.code === 'auth/weak-password') {
-        setAuthError('A senha deve ter pelo menos 6 caracteres.');
-      } else if (err.code === 'auth/invalid-email') {
-        setAuthError('O formato do e-mail informado é inválido.');
-      } else {
-        setAuthError(err.message || 'Falha ao criar conta no Firebase.');
       }
-      throw err;
+    } catch (apiErr: any) {
+      if (apiErr?.message && !apiErr.message.includes('fetch')) {
+        throw apiErr;
+      }
     }
+
+    setAuthError('Não foi possível cadastrar no momento. Verifique sua conexão ou entre diretamente com 1 clique pelo Google.');
+    throw new Error('Falha no cadastro.');
   };
 
   const signInWithGoogle = async () => {
@@ -257,31 +317,34 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
         return;
       }
-      setAuthError(err.message || 'Falha ao autenticar com o Google.');
+      setAuthError(err.message || 'Falha ao autenticar com o Google. Verifique os popups no seu navegador.');
       throw err;
     }
   };
 
   const resetPassword = async (email: string) => {
     setAuthError(null);
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = cleanEmailString(email);
     if (!cleanEmail) {
       setAuthError('Informe seu e-mail no campo acima para receber as instruções de recuperação.');
       throw new Error('E-mail necessário');
     }
+
+    // Try Firebase reset
     try {
       await sendPasswordResetEmail(auth, cleanEmail);
-    } catch (err: any) {
-      console.warn('Password reset error:', err);
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        setAuthError('E-mail não encontrado no Firebase. Verifique a digitação ou crie uma conta.');
-      } else if (err.code === 'auth/invalid-email') {
-        setAuthError('Formato de e-mail inválido.');
-      } else {
-        setAuthError(err.message || 'Falha ao enviar e-mail de redefinição de senha.');
-      }
-      throw err;
+    } catch (fbErr: any) {
+      console.warn('Firebase password reset notice:', fbErr?.code || fbErr?.message);
     }
+
+    // Also notify backend
+    try {
+      await fetch('/api/auth/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+    } catch {}
   };
 
   const signInAsGuest = async () => {

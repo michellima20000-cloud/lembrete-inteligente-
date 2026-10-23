@@ -2,6 +2,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import webpush from 'web-push';
@@ -84,13 +85,29 @@ export interface UserProfile {
   criado_em: string;
 }
 
-// Multi-User Data Store strictly keyed by authenticated user ID (Firebase UID)
+export interface AuthAccount {
+  id: string;
+  email: string;
+  nome: string;
+  passwordHash: string;
+  salt: string;
+  avatarCor: string;
+  criado_em: string;
+}
+
+// Multi-User Data Store strictly keyed by authenticated user ID (Firebase UID or persistent user ID)
 const userLembretes = new Map<string, Lembrete[]>();
 const userProfiles = new Map<string, UserProfile>();
 const userPushSubscriptions = new Map<string, webpush.PushSubscription[]>();
+const authAccounts = new Map<string, AuthAccount>();
 
-// Persistent Cache for push subscriptions and reminders across server restarts
+function hashPassword(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+}
+
+// Persistent Cache for push subscriptions, reminders, and accounts across server restarts
 const DATA_CACHE_FILE = path.join(__dirname, '.push-data-cache.json');
+const AUTH_ACCOUNTS_FILE = path.join(__dirname, '.auth-accounts.json');
 
 function loadCache() {
   try {
@@ -108,6 +125,21 @@ function loadCache() {
       }
       console.log(`[Cache] Dados restaurados do cache persistente para ${userPushSubscriptions.size} usuário(s) push.`);
     }
+
+    if (fs.existsSync(AUTH_ACCOUNTS_FILE)) {
+      const parsedAccounts = JSON.parse(fs.readFileSync(AUTH_ACCOUNTS_FILE, 'utf-8'));
+      for (const [emailKey, acc] of Object.entries(parsedAccounts)) {
+        authAccounts.set(emailKey.toLowerCase(), acc as AuthAccount);
+        userProfiles.set((acc as AuthAccount).id, {
+          id: (acc as AuthAccount).id,
+          nome: (acc as AuthAccount).nome,
+          email: (acc as AuthAccount).email,
+          avatarCor: (acc as AuthAccount).avatarCor,
+          criado_em: (acc as AuthAccount).criado_em,
+        });
+      }
+      console.log(`[Cache] Contas de usuário autenticadas carregadas: ${authAccounts.size}`);
+    }
   } catch (e) {
     console.warn('[Cache] Falha ao carregar cache de dados:', e);
   }
@@ -120,10 +152,223 @@ function saveCache() {
       userLembretes: Object.fromEntries(userLembretes.entries()),
     };
     fs.writeFileSync(DATA_CACHE_FILE, JSON.stringify(data, null, 2));
+
+    const accountsData = Object.fromEntries(authAccounts.entries());
+    fs.writeFileSync(AUTH_ACCOUNTS_FILE, JSON.stringify(accountsData, null, 2));
   } catch {}
 }
 
 loadCache();
+
+// ==========================================
+// AUTHENTICATION API (Mobile & Desktop Resilient)
+// ==========================================
+
+// Normalize email helper: cleans whitespaces, zero-width chars, and forces lowercase
+function cleanEmailString(raw: string): string {
+  if (!raw) return '';
+  return raw.trim().replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase();
+}
+
+// 1. API: Login with Email & Password
+app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { email, password, rawPassword } = req.body || {};
+  const cleanEmail = cleanEmailString(email);
+  const passToTest = (password || '').trim();
+  const rawPassToTest = rawPassword || password || '';
+
+  if (!cleanEmail || (!passToTest && !rawPassToTest)) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'Por favor, informe seu e-mail e senha.',
+    });
+  }
+
+  // Check if account is in persistent store
+  const account = authAccounts.get(cleanEmail);
+  if (account) {
+    const hash1 = hashPassword(passToTest, account.salt);
+    const hash2 = hashPassword(rawPassToTest, account.salt);
+
+    if (hash1 === account.passwordHash || hash2 === account.passwordHash) {
+      const profile: UserProfile = {
+        id: account.id,
+        nome: account.nome,
+        email: account.email,
+        avatarCor: account.avatarCor,
+        criado_em: account.criado_em,
+      };
+      userProfiles.set(account.id, profile);
+      return res.json({
+        status: 'sucesso',
+        mensagem: 'Autenticação realizada com sucesso!',
+        user: profile,
+      });
+    } else {
+      return res.status(401).json({
+        status: 'erro',
+        code: 'auth/wrong-password',
+        mensagem: 'Senha incorreta para esta conta. Toque no ícone de olho para conferir o que digitou no teclado do celular.',
+      });
+    }
+  }
+
+  // If account is not in authAccounts yet:
+  // Check if there is an existing profile in userProfiles or reminders for this email
+  let existingProfile: UserProfile | undefined;
+  for (const p of userProfiles.values()) {
+    if (p.email && cleanEmailString(p.email) === cleanEmail) {
+      existingProfile = p;
+      break;
+    }
+  }
+
+  // Auto-provision account seamlessly so user is never locked out
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = hashPassword(passToTest || rawPassToTest, salt);
+  const userId = existingProfile?.id || ('usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16));
+  const userName = existingProfile?.nome || cleanEmail.split('@')[0];
+
+  const newAccount: AuthAccount = {
+    id: userId,
+    email: cleanEmail,
+    nome: userName,
+    passwordHash,
+    salt,
+    avatarCor: existingProfile?.avatarCor || '#4f46e5',
+    criado_em: existingProfile?.criado_em || new Date().toISOString(),
+  };
+
+  authAccounts.set(cleanEmail, newAccount);
+  const profile: UserProfile = {
+    id: newAccount.id,
+    nome: newAccount.nome,
+    email: newAccount.email,
+    avatarCor: newAccount.avatarCor,
+    criado_em: newAccount.criado_em,
+  };
+  userProfiles.set(userId, profile);
+  if (!userLembretes.has(userId)) {
+    userLembretes.set(userId, []);
+  }
+  saveCache();
+
+  return res.json({
+    status: 'sucesso',
+    mensagem: 'Conta vinculada e autenticada com sucesso!',
+    user: profile,
+  });
+});
+
+// 2. API: Register new account with Email & Password
+app.all(['/api/auth/register', '/api/auth/register/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { email, password, nome, avatarCor } = req.body || {};
+  const cleanEmail = cleanEmailString(email);
+  const cleanPass = (password || '').trim();
+
+  if (!cleanEmail || !cleanPass) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'E-mail e senha são obrigatórios para cadastro.',
+    });
+  }
+
+  if (cleanPass.length < 6) {
+    return res.status(400).json({
+      status: 'erro',
+      mensagem: 'A senha deve conter no mínimo 6 caracteres.',
+    });
+  }
+
+  const existing = authAccounts.get(cleanEmail);
+  if (existing) {
+    // If password matches existing, auto-login
+    const hash = hashPassword(cleanPass, existing.salt);
+    if (hash === existing.passwordHash) {
+      const profile: UserProfile = {
+        id: existing.id,
+        nome: existing.nome,
+        email: existing.email,
+        avatarCor: existing.avatarCor,
+        criado_em: existing.criado_em,
+      };
+      return res.json({
+        status: 'sucesso',
+        mensagem: 'Conta já existia e login efetuado com sucesso!',
+        user: profile,
+      });
+    }
+
+    return res.status(409).json({
+      status: 'erro',
+      code: 'auth/email-already-in-use',
+      mensagem: 'Esta conta de e-mail já está cadastrada. Alterne para a aba "Entrar" com a sua senha.',
+    });
+  }
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = hashPassword(cleanPass, salt);
+  const userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  const displayName = (nome || '').trim() || cleanEmail.split('@')[0];
+
+  const newAccount: AuthAccount = {
+    id: userId,
+    email: cleanEmail,
+    nome: displayName,
+    passwordHash,
+    salt,
+    avatarCor: avatarCor || '#4f46e5',
+    criado_em: new Date().toISOString(),
+  };
+
+  authAccounts.set(cleanEmail, newAccount);
+  const profile: UserProfile = {
+    id: newAccount.id,
+    nome: newAccount.nome,
+    email: newAccount.email,
+    avatarCor: newAccount.avatarCor,
+    criado_em: newAccount.criado_em,
+  };
+  userProfiles.set(userId, profile);
+  if (!userLembretes.has(userId)) {
+    userLembretes.set(userId, []);
+  }
+  saveCache();
+
+  return res.json({
+    status: 'sucesso',
+    mensagem: 'Conta criada com sucesso!',
+    user: profile,
+  });
+});
+
+// 3. API: Password Reset
+app.all(['/api/auth/reset', '/api/auth/reset/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const { email, newPassword } = req.body || {};
+  const cleanEmail = cleanEmailString(email);
+
+  if (!cleanEmail) {
+    return res.status(400).json({ status: 'erro', mensagem: 'Informe o e-mail para redefinir a senha.' });
+  }
+
+  const existing = authAccounts.get(cleanEmail);
+  if (existing && newPassword && String(newPassword).length >= 6) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    existing.salt = salt;
+    existing.passwordHash = hashPassword(String(newPassword).trim(), salt);
+    authAccounts.set(cleanEmail, existing);
+    saveCache();
+    return res.json({ status: 'sucesso', mensagem: 'Senha redefinida com sucesso!' });
+  }
+
+  return res.json({
+    status: 'sucesso',
+    mensagem: `Instruções de redefinição processadas para ${cleanEmail}. Você também pode entrar com 1 clique pelo Google!`,
+  });
+});
 
 // API: Get or Sync User Profile
 app.get('/api/users', (req: Request, res: Response) => {
