@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Calendar,
   Clock,
@@ -32,6 +32,29 @@ export const TimelineAgenda: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [currentTimeMs, setCurrentTimeMs] = useState<number>(() => Date.now());
+
+  // Continuously update live countdown and instantly recalculate when returning from lockscreen
+  useEffect(() => {
+    const updateTick = () => setCurrentTimeMs(Date.now());
+
+    // Update every 5 seconds so minute count automatically steps down live
+    const interval = setInterval(updateTick, 5000);
+
+    // When phone is unlocked or user switches back to browser, update immediately
+    const handleVisibility = () => {
+      updateTick();
+    };
+
+    window.addEventListener('focus', handleVisibility);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleVisibility);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   // Group and count tabs
   const pendingCount = reminders.filter((r) => r.status_tarefa === 'pendente').length;
@@ -62,7 +85,7 @@ export const TimelineAgenda: React.FC = () => {
   // Calculate friendly relative countdown & formatting
   const formatTimeInfo = (isoString: string) => {
     const targetDate = new Date(isoString);
-    const now = new Date();
+    const now = new Date(currentTimeMs);
     const diffMs = targetDate.getTime() - now.getTime();
     const diffMin = Math.round(diffMs / 60000);
 

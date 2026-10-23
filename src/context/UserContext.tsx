@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
-import { auth, googleProvider } from '../lib/firebase';
+import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -91,6 +92,13 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
               rememberEmail(user.email);
             }
           } catch {}
+
+          // Save user profile to Firestore cloud
+          try {
+            await setDoc(doc(db, 'users', user.uid), profile, { merge: true });
+          } catch (e) {
+            handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
+          }
 
           // Register in backend
           fetch('/api/users', {

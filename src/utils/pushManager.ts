@@ -101,9 +101,20 @@ class PushManagerService {
       this.registration = reg;
       console.log('[PushManager] Service Worker registrado com escopo:', reg.scope);
 
-      // Check for updates
+      // Check for updates and register periodicSync if available
       try {
         reg.update();
+      } catch {}
+
+      try {
+        if ('periodicSync' in reg) {
+          const status = await (navigator as any).permissions?.query?.({ name: 'periodic-background-sync' });
+          if (!status || status.state === 'granted') {
+            await (reg as any).periodicSync.register('check-alarms', {
+              minInterval: 60 * 1000,
+            });
+          }
+        }
       } catch {}
 
       // Listen for background push message signals from service worker
@@ -347,6 +358,24 @@ class PushManagerService {
   }
 
   public async syncReminders(userId: string, lembretes: any[]): Promise<void> {
+    // 1. Post to active Service Worker for IndexedDB persistence and native OS NotificationTriggers
+    try {
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        const reg = await (this.registration || navigator.serviceWorker.ready);
+        const target = reg?.active || navigator.serviceWorker.controller;
+        if (target) {
+          target.postMessage({
+            type: 'SCHEDULE_REMINDERS',
+            userId,
+            reminders: lembretes,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[PushManager] Falha ao despachar SCHEDULE_REMINDERS para Service Worker:', e);
+    }
+
+    // 2. Sync with backend server
     try {
       const res = await safeFetchJson('/api/reminders/sync', {
         method: 'POST',

@@ -1,9 +1,12 @@
 {
-  "apiKey": "AIzaSyDO4msi5UlORLDgs2qwXPOkoetbsu7WBoA",
-  "authDomain": "lembrete-inteligente-b6cd1.firebaseapp.com",
-  "projectId": "lembrete-inteligente-b6cd1",
-  "storageBucket": "lembrete-inteligente-b6cd1.firebasestorage.app",
-  "messagingSenderId": "408773274044",
-  "appId": "1:408773274044:web:f9adf131c25690a92463b9",
-  "measurementId": "G-P6HH88H32K"
+  "projectId": "gen-lang-client-0682320671",
+  "appId": "1:1021285542263:web:d8b1303ce5257f88b9d972",
+  "apiKey": "AIzaSyDJm-ND0f-RBu8Lu6M3I6cKXWU4TPtO9lI",
+  "authDomain": "gen-lang-client-0682320671.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-lembreteintelige-59ef000c-fb7e-48fe-832a-fc67801d3340",
+  "storageBucket": "gen-lang-client-0682320671.firebasestorage.app",
+  "messagingSenderId": "1021285542263",
+  "measurementId": "",
+  "oAuthClientId": "1021285542263-rl6uecqf6kcf1d8bvq30jb2qhv955dj3.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

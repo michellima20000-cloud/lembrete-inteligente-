@@ -1,7 +1,7 @@
 // Service Worker entry point for Lembrete Inteligente PWA
 // Imports background push and alarm handlers and caches essential PWA assets
 
-const CACHE_NAME = 'lembrete-inteligente-pwa-v4';
+const CACHE_NAME = 'lembrete-inteligente-pwa-v5';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -11,11 +11,11 @@ const PRECACHE_ASSETS = [
   '/icon.svg',
 ];
 
-// Import background push handler
+// Import background push and custom alarm scheduler
 try {
-  importScripts('/sw-push.js');
+  importScripts('/sw-custom.js');
 } catch (e) {
-  console.warn('[SW] Falha ao importar /sw-push.js:', e);
+  console.warn('[SW] Falha ao importar /sw-custom.js:', e);
 }
 
 self.addEventListener('install', (event) => {

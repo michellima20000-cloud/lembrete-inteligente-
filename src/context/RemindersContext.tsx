@@ -249,22 +249,32 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         colRef,
         (snapshot) => {
           setIsFirestoreSyncing(true);
-          if (!snapshot.empty) {
-            const fbItems: Lembrete[] = [];
-            snapshot.forEach((docSnap) => {
-              fbItems.push(docSnap.data() as Lembrete);
+          const fbItems: Lembrete[] = [];
+          snapshot.forEach((docSnap) => {
+            fbItems.push(docSnap.data() as Lembrete);
+          });
+
+          // Upload any local items not yet in Firestore to guarantee complete cloud synchronization
+          const localItems = loadLocalPartition(currentUser.id);
+          const fbIdSet = new Set(fbItems.map((i) => i.id));
+          const missingInFirestore = localItems.filter((i) => !fbIdSet.has(i.id));
+          if (missingInFirestore.length > 0) {
+            missingInFirestore.forEach((item) => {
+              setDoc(doc(db, 'users', currentUser.id, 'reminders', item.id), item).catch((err) => {
+                handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.id}/reminders/${item.id}`);
+              });
             });
-
-            // Enforce strict user_id isolation
-            const verified = fbItems.filter((i) => i.user_id === currentUser.id);
-            verified.sort(
-              (a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
-            );
-
-            setReminders(verified);
-            saveLocalPartition(currentUser.id, verified);
-            pushManager.syncReminders(currentUser.id, verified);
           }
+
+          const allItems = [...fbItems, ...missingInFirestore];
+          const verified = allItems.filter((i) => i.user_id === currentUser.id);
+          verified.sort(
+            (a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
+          );
+
+          setReminders(verified);
+          saveLocalPartition(currentUser.id, verified);
+          pushManager.syncReminders(currentUser.id, verified);
         },
         (error) => {
           handleFirestoreError(error, OperationType.GET, remindersPath);
@@ -278,7 +288,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => {
       unsubscribe();
     };
-  }, [currentUser?.id, fetchReminders, saveLocalPartition]);
+  }, [currentUser?.id, fetchReminders, loadLocalPartition, saveLocalPartition]);
 
   // Send Background Notification via Service Worker (Android Chrome / PWA) or Notification API
   const triggerPushNotification = async (item: Lembrete, isAntecedencia = false) => {

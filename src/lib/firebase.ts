@@ -14,12 +14,19 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
 if (typeof window !== 'undefined') {
   setPersistence(auth, browserLocalPersistence).catch((err) => {
     console.warn('Firebase persistence warning:', err);
+  });
+
+  // Verify connection to Firestore cloud database
+  getDocFromServer(doc(db, 'test', 'connection')).catch((error) => {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Por favor, verifique a conexão com o Firestore.');
+    }
   });
 }
 
