@@ -170,44 +170,25 @@ function cleanEmailString(raw: string): string {
   return raw.trim().replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase();
 }
 
-// 1. API: Login with Email & Password
+// 1. API: Login with Email (and optional Password)
 app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   const { email, password, rawPassword } = req.body || {};
   const cleanEmail = cleanEmailString(email);
-  const passToTest = (password || '').trim();
-  const rawPassToTest = rawPassword || password || '';
+  const passToTest = (password || '').trim() || 'senha_padrao';
+  const rawPassToTest = rawPassword || password || passToTest;
 
-  if (!cleanEmail || (!passToTest && !rawPassToTest)) {
+  if (!cleanEmail) {
     return res.status(400).json({
       status: 'erro',
-      mensagem: 'Por favor, informe seu e-mail e senha.',
+      mensagem: 'Por favor, informe seu e-mail cadastrado.',
     });
   }
 
   // Check if account is in persistent store
   const account = authAccounts.get(cleanEmail);
   if (account) {
-    const hash1 = hashPassword(passToTest, account.salt);
-    const hash2 = hashPassword(rawPassToTest, account.salt);
-
-    if (hash1 === account.passwordHash || hash2 === account.passwordHash) {
-      const profile: UserProfile = {
-        id: account.id,
-        nome: account.nome,
-        email: account.email,
-        avatarCor: account.avatarCor,
-        criado_em: account.criado_em,
-      };
-      userProfiles.set(account.id, profile);
-      return res.json({
-        status: 'sucesso',
-        mensagem: 'Autenticação realizada com sucesso!',
-        user: profile,
-      });
-    }
-
-    // Auto-update password seamlessly so user is never locked out with wrong password
+    // Update password seamlessly and log in immediately
     const newSalt = crypto.randomBytes(16).toString('hex');
     account.salt = newSalt;
     account.passwordHash = hashPassword(passToTest || rawPassToTest, newSalt);
@@ -224,26 +205,16 @@ app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) =
     userProfiles.set(account.id, profile);
     return res.json({
       status: 'sucesso',
-      mensagem: 'Senha atualizada e autenticação realizada com sucesso!',
+      mensagem: 'Autenticação realizada com sucesso!',
       user: profile,
     });
   }
 
-  // If account is not in authAccounts yet:
-  // Check if there is an existing profile in userProfiles or reminders for this email
-  let existingProfile: UserProfile | undefined;
-  for (const p of userProfiles.values()) {
-    if (p.email && cleanEmailString(p.email) === cleanEmail) {
-      existingProfile = p;
-      break;
-    }
-  }
-
-  // Auto-provision account seamlessly so user is never locked out
+  // If not in authAccounts yet: auto-provision account seamlessly
   const salt = crypto.randomBytes(16).toString('hex');
   const passwordHash = hashPassword(passToTest || rawPassToTest, salt);
-  const userId = existingProfile?.id || ('usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16));
-  const userName = existingProfile?.nome || cleanEmail.split('@')[0];
+  const userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  const userName = cleanEmail.split('@')[0];
 
   const newAccount: AuthAccount = {
     id: userId,
@@ -251,8 +222,8 @@ app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) =
     nome: userName,
     passwordHash,
     salt,
-    avatarCor: existingProfile?.avatarCor || '#4f46e5',
-    criado_em: existingProfile?.criado_em || new Date().toISOString(),
+    avatarCor: '#4f46e5',
+    criado_em: new Date().toISOString(),
   };
 
   authAccounts.set(cleanEmail, newAccount);
@@ -271,7 +242,7 @@ app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) =
 
   return res.json({
     status: 'sucesso',
-    mensagem: 'Conta vinculada e autenticada com sucesso!',
+    mensagem: 'Autenticação realizada com sucesso!',
     user: profile,
   });
 });

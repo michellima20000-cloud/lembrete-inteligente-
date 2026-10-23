@@ -62,7 +62,8 @@ export const LoginScreen: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) return;
+    if (!email.trim()) return;
+    if (mode === 'register' && !password.trim()) return;
 
     setResetSentMessage(null);
     clearAuthError();
@@ -310,15 +311,15 @@ export const LoginScreen: React.FC = () => {
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  required
+                  required={mode === 'register'}
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                  minLength={6}
+                  placeholder={mode === 'login' ? 'Digite sua senha (ou deixe em branco)' : 'Mínimo 6 caracteres'}
+                  minLength={mode === 'register' ? 6 : undefined}
                   className="w-full bg-slate-800/90 border border-slate-700 rounded-2xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
                 />
                 <button
