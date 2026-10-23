@@ -18,6 +18,7 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // CORS & Preflight OPTIONS handler to prevent 405 Method Not Allowed on cross-origin/PWA requests
 app.use((req: Request, res: Response, next) => {
@@ -27,6 +28,13 @@ app.use((req: Request, res: Response, next) => {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
+  next();
+});
+
+// Force JSON Content-Type and disable caching on all /api routes
+app.use('/api', (req: Request, res: Response, next) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   next();
 });
 

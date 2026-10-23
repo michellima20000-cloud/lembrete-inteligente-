@@ -3,8 +3,8 @@
     "id": "usr_68dd8a516780b021",
     "email": "michel.lima123@gmail.com",
     "nome": "Michel",
-    "passwordHash": "8d42f9c85d4961caee8fe0eb534eddb24219ed226898dae51c37eeb9262da152e20b4c0af1ea358df5894da61f3665f06981619d29491f86254a26e52ca952cb",
-    "salt": "59a921623993091ade26141c88853409",
+    "passwordHash": "de0119fcfbd3dea2084f60732b32e1c8b96fe399cd9d93809c8c333179e5948cf26441ae8fb1a5f929a13a389e792c7644dc607aabd160162c71ad8ccc268efc",
+    "salt": "eb2b7c4cdf3b7a0189ea81e1bab79542",
     "avatarCor": "#4f46e5",
     "criado_em": "2026-10-23T16:56:54.994Z"
   },

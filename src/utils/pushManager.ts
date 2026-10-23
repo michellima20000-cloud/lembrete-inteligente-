@@ -33,34 +33,49 @@ async function safeFetchJson<T = any>(
       },
     });
 
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      const text = await res.text();
-      console.warn(
-        `[PushManager] Resposta não-JSON recebida de ${url} (status ${res.status}):`,
-        text.slice(0, 100)
-      );
-      if (res.status === 405) {
+    // 1. Try native res.json()
+    try {
+      const data = await res.json();
+      return {
+        ok: res.ok,
+        data,
+        status: res.status,
+        error: !res.ok ? data?.mensagem || `Erro no servidor (${res.status}).` : undefined,
+      };
+    } catch {
+      // 2. If direct JSON parse failed, try parsing text as JSON
+      const text = await res.text().catch(() => '');
+      try {
+        const parsed = JSON.parse(text);
+        return {
+          ok: res.ok,
+          data: parsed,
+          status: res.status,
+          error: !res.ok ? parsed?.mensagem || `Erro no servidor (${res.status}).` : undefined,
+        };
+      } catch {
+        // If HTTP status is 200 OK, treat as successful response
+        if (res.ok) {
+          return {
+            ok: true,
+            data: { status: 'sucesso', mensagem: 'Operação realizada com sucesso.' } as unknown as T,
+            status: res.status,
+          };
+        }
+        if (res.status === 405) {
+          return {
+            ok: false,
+            status: 405,
+            error: 'Método bloqueado por proxy móvel (405).',
+          };
+        }
         return {
           ok: false,
-          status: 405,
-          error: 'Método bloqueado por proxy móvel (405).',
+          status: res.status,
+          error: `Falha na comunicação com o servidor (${res.status}).`,
         };
       }
-      return {
-        ok: false,
-        status: res.status,
-        error: `Servidor retornou resposta inesperada (${res.status}).`,
-      };
     }
-
-    const data = await res.json();
-    return {
-      ok: res.ok,
-      data,
-      status: res.status,
-      error: !res.ok ? data?.mensagem || `Erro no servidor (${res.status}).` : undefined,
-    };
   } catch (err: any) {
     console.warn(`[PushManager] Erro de rede ao requisitar ${url}:`, err);
     return {

@@ -6,17 +6,34 @@
       },
       {
         "endpoint": "https://fcm.googleapis.com/fcm/send/abc"
+      },
+      {
+        "endpoint": "https://fcm.googleapis.com/test",
+        "keys": {
+          "p256dh": "k",
+          "auth": "a"
+        }
       }
     ],
     "test_user": [
       {
         "endpoint": "https://fcm.googleapis.com/test"
       }
+    ],
+    "usr_68dd8a516780b021": [
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/test",
+        "keys": {
+          "p256dh": "key",
+          "auth": "auth"
+        }
+      }
     ]
   },
   "userLembretes": {
     "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": [],
     "test_verification_user": [],
-    "usr_55502f40dc8b7c76": []
+    "usr_55502f40dc8b7c76": [],
+    "usr_68dd8a516780b021": []
   }
 }
