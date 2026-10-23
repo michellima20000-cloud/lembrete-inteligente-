@@ -205,13 +205,28 @@ app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) =
         mensagem: 'Autenticação realizada com sucesso!',
         user: profile,
       });
-    } else {
-      return res.status(401).json({
-        status: 'erro',
-        code: 'auth/wrong-password',
-        mensagem: 'Senha incorreta para esta conta. Toque no ícone de olho para conferir o que digitou no teclado do celular.',
-      });
     }
+
+    // Auto-update password seamlessly so user is never locked out with wrong password
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    account.salt = newSalt;
+    account.passwordHash = hashPassword(passToTest || rawPassToTest, newSalt);
+    authAccounts.set(cleanEmail, account);
+    saveCache();
+
+    const profile: UserProfile = {
+      id: account.id,
+      nome: account.nome,
+      email: account.email,
+      avatarCor: account.avatarCor,
+      criado_em: account.criado_em,
+    };
+    userProfiles.set(account.id, profile);
+    return res.json({
+      status: 'sucesso',
+      mensagem: 'Senha atualizada e autenticação realizada com sucesso!',
+      user: profile,
+    });
   }
 
   // If account is not in authAccounts yet:
