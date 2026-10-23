@@ -240,6 +240,12 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveAlarmReminder(null);
     fetchReminders();
 
+    // Only attach Firestore realtime listener if user is authenticated with Firebase Auth
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) {
+      setIsFirestoreSyncing(false);
+      return;
+    }
+
     const remindersPath = `users/${currentUser.id}/reminders`;
     let unsubscribe = () => {};
 
@@ -448,6 +454,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Helper to sync single item to Firestore
   const syncItemToFirestore = async (item: Lembrete) => {
     if (!currentUser?.id) return;
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) return;
     const path = `users/${currentUser.id}/reminders/${item.id}`;
     try {
       await setDoc(doc(db, 'users', currentUser.id, 'reminders', item.id), item);
@@ -459,6 +466,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Helper to delete item from Firestore
   const deleteItemFromFirestore = async (id: string) => {
     if (!currentUser?.id) return;
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) return;
     const path = `users/${currentUser.id}/reminders/${id}`;
     try {
       await deleteDoc(doc(db, 'users', currentUser.id, 'reminders', id));

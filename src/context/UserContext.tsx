@@ -107,18 +107,12 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             body: JSON.stringify(profile),
           }).catch(() => {});
         } else {
-          // If no Firebase user session yet (e.g. reload inside iframe):
+          // If no Firebase user session yet (e.g. reload inside iframe or local session):
           // Check if we have a persistent user session
           const hasSavedUser = localStorage.getItem('lembrete_authenticated_user');
           const savedEmail = localStorage.getItem('lembrete_saved_email');
           const savedPass = localStorage.getItem('lembrete_saved_pass');
-
-          // If we had stored credentials, attempt silent background reconnect
-          if (savedEmail && savedPass && !auth.currentUser) {
-            signInWithEmailAndPassword(auth, savedEmail, savedPass).catch((e) => {
-              console.warn('Background silent reconnect deferred:', e?.message);
-            });
-          }
+          const isFbEmailDisabled = localStorage.getItem('fb_email_auth_disabled') === 'true';
 
           if (hasSavedUser) {
             try {
@@ -126,6 +120,23 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch {
               setCurrentUser(null);
             }
+          } else if (savedEmail && savedPass) {
+            // Reconnect via backend auth API if local session was cleared
+            fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: savedEmail, password: savedPass }),
+            })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data.status === 'sucesso' && data.user) {
+                  setCurrentUser(data.user);
+                  try {
+                    localStorage.setItem('lembrete_authenticated_user', JSON.stringify(data.user));
+                  } catch {}
+                }
+              })
+              .catch(() => {});
           } else {
             try {
               const storedGuest = localStorage.getItem('lembrete_guest_user');
@@ -137,6 +148,19 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch {
               setCurrentUser(null);
             }
+          }
+
+          // If Firebase Email Auth is not disabled and user requested silent reconnect, attempt gracefully
+          if (savedEmail && savedPass && !auth.currentUser && !isFbEmailDisabled) {
+            signInWithEmailAndPassword(auth, savedEmail, savedPass).catch((e: any) => {
+              if (e?.code === 'auth/operation-not-allowed' || e?.message?.includes('operation-not-allowed')) {
+                try {
+                  localStorage.setItem('fb_email_auth_disabled', 'true');
+                } catch {}
+              } else {
+                console.warn('Background silent reconnect deferred:', e?.message);
+              }
+            });
           }
         }
         setIsAuthReady(true);
@@ -164,30 +188,36 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('E-mail e senha obrigatórios.');
     }
 
-    // 1. First attempt native Firebase Auth
-    let fbSuccess = false;
-    try {
-      await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
-      fbSuccess = true;
-      rememberEmail(cleanEmail);
+    // 1. First attempt native Firebase Auth if enabled on the project
+    const isFbEmailDisabled = localStorage.getItem('fb_email_auth_disabled') === 'true';
+    if (!isFbEmailDisabled) {
       try {
-        localStorage.setItem('lembrete_saved_pass', cleanPass);
-      } catch {}
-      return;
-    } catch (fbErr: any) {
-      // If trimmed failed, test with raw pass
-      if (cleanPass !== pass) {
+        await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+        rememberEmail(cleanEmail);
         try {
-          await signInWithEmailAndPassword(auth, cleanEmail, pass);
-          fbSuccess = true;
-          rememberEmail(cleanEmail);
-          try {
-            localStorage.setItem('lembrete_saved_pass', pass);
-          } catch {}
-          return;
+          localStorage.setItem('lembrete_saved_pass', cleanPass);
         } catch {}
+        return;
+      } catch (fbErr: any) {
+        if (fbErr?.code === 'auth/operation-not-allowed' || fbErr?.message?.includes('operation-not-allowed')) {
+          try {
+            localStorage.setItem('fb_email_auth_disabled', 'true');
+          } catch {}
+        } else {
+          // If trimmed failed, test with raw pass
+          if (cleanPass !== pass) {
+            try {
+              await signInWithEmailAndPassword(auth, cleanEmail, pass);
+              rememberEmail(cleanEmail);
+              try {
+                localStorage.setItem('lembrete_saved_pass', pass);
+              } catch {}
+              return;
+            } catch {}
+          }
+          console.warn('Firebase native email login:', fbErr?.code || fbErr?.message);
+        }
       }
-      console.warn('Firebase native email login:', fbErr?.code || fbErr?.message);
     }
 
     // 2. If Firebase has PASSWORD_LOGIN_DISABLED or operation-not-allowed or account is local:
@@ -246,26 +276,34 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Senha muito curta.');
     }
 
-    // 1. Try Firebase native registration
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
-      rememberEmail(cleanEmail);
+    // 1. Try Firebase native registration if enabled on the project
+    const isFbEmailDisabled = localStorage.getItem('fb_email_auth_disabled') === 'true';
+    if (!isFbEmailDisabled) {
       try {
-        localStorage.setItem('lembrete_saved_pass', cleanPass);
-      } catch {}
-      if (name && name.trim()) {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+        rememberEmail(cleanEmail);
         try {
-          await updateProfile(cred.user, { displayName: name.trim() });
-        } catch (e) {
-          console.warn('Could not update displayName:', e);
+          localStorage.setItem('lembrete_saved_pass', cleanPass);
+        } catch {}
+        if (name && name.trim()) {
+          try {
+            await updateProfile(cred.user, { displayName: name.trim() });
+          } catch (e) {
+            console.warn('Could not update displayName:', e);
+          }
         }
-      }
-      return;
-    } catch (fbErr: any) {
-      console.warn('Firebase native sign up:', fbErr?.code || fbErr?.message);
-      if (fbErr.code === 'auth/email-already-in-use') {
-        // If already in Firebase, attempt login
-        return await signInWithEmail(cleanEmail, cleanPass);
+        return;
+      } catch (fbErr: any) {
+        if (fbErr?.code === 'auth/operation-not-allowed' || fbErr?.message?.includes('operation-not-allowed')) {
+          try {
+            localStorage.setItem('fb_email_auth_disabled', 'true');
+          } catch {}
+        } else if (fbErr.code === 'auth/email-already-in-use') {
+          // If already in Firebase, attempt login
+          return await signInWithEmail(cleanEmail, cleanPass);
+        } else {
+          console.warn('Firebase native sign up:', fbErr?.code || fbErr?.message);
+        }
       }
     }
 
