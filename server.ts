@@ -1093,8 +1093,10 @@ async function sendBackgroundPushNotification(
       activeSubs.push(sub);
     } catch (err: any) {
       console.warn('[WebPush] Falha ao enviar alarme push:', err?.statusCode || err?.message);
-      if (err?.statusCode !== 404 && err?.statusCode !== 410) {
+      if (err?.statusCode !== 404 && err?.statusCode !== 410 && err?.statusCode !== 401 && err?.statusCode !== 403) {
         activeSubs.push(sub);
+      } else {
+        console.log(`[WebPush] Inscrição expirada ou inválida removida (${err?.statusCode}): ${sub.endpoint.slice(0, 40)}...`);
       }
     }
   }

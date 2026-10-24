@@ -17,6 +17,16 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+function keysEqual(key1: ArrayBuffer | ArrayBufferView | null | undefined, key2: Uint8Array): boolean {
+  if (!key1) return false;
+  const arr1 = key1 instanceof Uint8Array ? key1 : new Uint8Array(key1 instanceof ArrayBuffer ? key1 : (key1 as ArrayBufferView).buffer);
+  if (arr1.length !== key2.length) return false;
+  for (let i = 0; i < arr1.length; i++) {
+    if (arr1[i] !== key2[i]) return false;
+  }
+  return true;
+}
+
 /**
  * Safe fetch helper that guarantees we never attempt to parse HTML responses as JSON,
  * completely preventing "Unexpected token '<', '<!doctype' is not valid JSON" errors.
@@ -234,10 +244,12 @@ class PushManagerService {
       try {
         subscription = await reg.pushManager.getSubscription();
         if (subscription) {
-          // If already subscribed, verify if applicationServerKey matches or renew
+          // If already subscribed, verify if applicationServerKey matches current key
           try {
             const rawKey = subscription.options?.applicationServerKey;
-            if (!rawKey) {
+            const matches = keysEqual(rawKey, applicationServerKey);
+            if (!matches) {
+              console.log('[PushManager] Inscrição antiga com chave VAPID divergente detectada. Renovando inscrição...');
               await subscription.unsubscribe();
               subscription = null;
             }
@@ -254,6 +266,7 @@ class PushManagerService {
             userVisibleOnly: true,
             applicationServerKey: applicationServerKey as unknown as BufferSource,
           });
+          console.log('[PushManager] Nova inscrição Push criada com sucesso.');
         }
       } catch (subErr) {
         console.warn('[PushManager] Tentativa direta falhou, renovando inscrição:', subErr);
@@ -307,12 +320,27 @@ class PushManagerService {
 
       // 6. Auto-sync user's active reminders so background runner starts monitoring immediately
       try {
+        let items: any[] = [];
         const saved = localStorage.getItem(`lembretes_isolated_${userId}`);
         if (saved) {
-          const items = JSON.parse(saved);
-          if (Array.isArray(items) && items.length > 0) {
-            await this.syncReminders(userId, items);
+          try { items = JSON.parse(saved); } catch {}
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('lembretes_isolated_')) {
+              try {
+                const found = JSON.parse(localStorage.getItem(k) || '[]');
+                if (Array.isArray(found) && found.length > 0) {
+                  items = found;
+                  break;
+                }
+              } catch {}
+            }
           }
+        }
+        if (Array.isArray(items) && items.length > 0) {
+          await this.syncReminders(userId, items);
         }
       } catch {}
 

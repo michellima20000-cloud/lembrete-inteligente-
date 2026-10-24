@@ -76,7 +76,7 @@ function createAlarmWavDataUri(): string {
 }
 
 function createSilentWavDataUri(): string {
-  // Generate 1-second clean digital silence WAV to keep browser audio thread active
+  // Generate 1.0 second sub-audible micro-dither WAV (19Hz @ 0.0003) to keep browser audio thread active
   const sampleRate = 8000;
   const numChannels = 1;
   const duration = 1.0;
@@ -104,6 +104,16 @@ function createSilentWavDataUri(): string {
   view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / sampleRate;
+    // 19Hz inaudible sub-bass oscillation: keeps Android audio focus and prevents CPU suspension
+    const sample = Math.sin(2 * Math.PI * 19 * t) * 0.0003;
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += 2;
+  }
 
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -349,6 +359,8 @@ class SoundAlertManager {
             ],
           });
         }
+
+        navigator.mediaSession.playbackState = 'playing';
 
         navigator.mediaSession.setActionHandler('play', () => {
           if (this.isRinging) {

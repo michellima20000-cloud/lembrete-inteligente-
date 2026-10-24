@@ -35,10 +35,25 @@
     "test_verification_user": [],
     "usr_55502f40dc8b7c76": [],
     "usr_68dd8a516780b021": [],
-    "test_user": []
+    "test_user": [],
+    "test_verification": [
+      {
+        "id": "rem_test_sync",
+        "user_id": "test_verification",
+        "titulo": "Teste de Segundo Plano",
+        "data_hora_execucao": "2026-10-24T14:40:00",
+        "antecedencia_minutos": 0,
+        "status_tarefa": "pendente",
+        "criado_em": "2026-10-24T14:38:00",
+        "timestamp_execucao": 1792863600000,
+        "timezone_offset_minutes": 180
+      }
+    ]
   },
   "serverTriggeredReminders": [],
   "userTimezoneOffsets": {
-    "test_user": 180
+    "test_user": 180,
+    "usr_68dd8a516780b021": 180,
+    "test_verification": 180
   }
 }

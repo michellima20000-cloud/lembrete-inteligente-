@@ -296,6 +296,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const local = loadLocalPartition(currentUser.id);
     if (local && local.length > 0) {
       setReminders(local);
+      pushManager.syncReminders(currentUser.id, local);
     }
     fetchReminders();
 

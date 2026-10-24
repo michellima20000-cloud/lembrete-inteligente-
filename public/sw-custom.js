@@ -56,65 +56,68 @@ async function saveAlarmsToDB(userId, reminders) {
 
   const incomingIds = new Set(reminders.map((r) => r.id));
 
-  // Prune any alarms previously stored for this user that are no longer in the incoming list
-  for (const [id, existingRec] of existingMap.entries()) {
-    if ((existingRec.user_id === userId || !userId) && !incomingIds.has(id)) {
-      store.delete(id);
-      try {
-        self.registration.getNotifications({ tag: `${id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-        self.registration.getNotifications({ tag: `${id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-      } catch {}
-    }
-  }
-
-  for (const item of reminders) {
-    if (item.status_tarefa === 'concluído') {
-      store.delete(item.id);
-      try {
-        self.registration.getNotifications({ tag: `${item.id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-        self.registration.getNotifications({ tag: `${item.id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-      } catch {}
-      continue;
-    }
-
-    let targetTimestamp = Number(item.timestamp_execucao);
-    if (!targetTimestamp || isNaN(targetTimestamp)) {
-      targetTimestamp = new Date(item.data_hora_execucao).getTime();
-    }
-    if (!targetTimestamp || isNaN(targetTimestamp)) continue;
-
-    const antMin = Number(item.antecedencia_minutos) || 0;
-    const antTimestamp = antMin > 0 ? targetTimestamp - antMin * 60 * 1000 : null;
-
-    const existing = existingMap.get(item.id);
-    const isNewSchedule = !existing || existing.targetTimestamp !== targetTimestamp;
-
-    const record = {
-      id: item.id,
-      user_id: item.user_id || userId || 'default',
-      titulo: item.titulo || 'Lembrete',
-      data_hora_execucao: item.data_hora_execucao,
-      targetTimestamp: targetTimestamp,
-      antecedencia_minutos: antMin,
-      antTimestamp: antTimestamp,
-      status_tarefa: item.status_tarefa || 'pendente',
-      categoria: item.categoria || 'Geral',
-      urgencia: item.urgencia || 'media',
-      execFired: isNewSchedule ? false : !!existing.execFired,
-      antFired: isNewSchedule ? false : !!existing.antFired,
-      updated_at: Date.now(),
-    };
-
-    store.put(record);
-
-    // Agendar gatilho nativo no SO (NotificationTriggers) se suportado pelo navegador
-    scheduleNativeNotificationTrigger(record, 'exec', targetTimestamp).catch(() => {});
-    if (antTimestamp && antTimestamp > Date.now()) {
-      scheduleNativeNotificationTrigger(record, 'ant', antTimestamp).catch(() => {});
-    }
-  }
-
   return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_ALARMS], 'readwrite');
+    const store = transaction.objectStore(STORE_ALARMS);
+
+    // Prune any alarms previously stored for this user that are no longer in the incoming list
+    for (const [id, existingRec] of existingMap.entries()) {
+      if ((existingRec.user_id === userId || !userId) && !incomingIds.has(id)) {
+        store.delete(id);
+        try {
+          self.registration.getNotifications({ tag: `${id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+          self.registration.getNotifications({ tag: `${id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+        } catch {}
+      }
+    }
+
+    for (const item of reminders) {
+      if (item.status_tarefa === 'concluído') {
+        store.delete(item.id);
+        try {
+          self.registration.getNotifications({ tag: `${item.id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+          self.registration.getNotifications({ tag: `${item.id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+        } catch {}
+        continue;
+      }
+
+      let targetTimestamp = Number(item.timestamp_execucao);
+      if (!targetTimestamp || isNaN(targetTimestamp)) {
+        targetTimestamp = new Date(item.data_hora_execucao).getTime();
+      }
+      if (!targetTimestamp || isNaN(targetTimestamp)) continue;
+
+      const antMin = Number(item.antecedencia_minutos) || 0;
+      const antTimestamp = antMin > 0 ? targetTimestamp - antMin * 60 * 1000 : null;
+
+      const existing = existingMap.get(item.id);
+      const isNewSchedule = !existing || existing.targetTimestamp !== targetTimestamp;
+
+      const record = {
+        id: item.id,
+        user_id: item.user_id || userId || 'default',
+        titulo: item.titulo || 'Lembrete',
+        data_hora_execucao: item.data_hora_execucao,
+        targetTimestamp: targetTimestamp,
+        antecedencia_minutos: antMin,
+        antTimestamp: antTimestamp,
+        status_tarefa: item.status_tarefa || 'pendente',
+        categoria: item.categoria || 'Geral',
+        urgencia: item.urgencia || 'media',
+        execFired: isNewSchedule ? false : !!existing.execFired,
+        antFired: isNewSchedule ? false : !!existing.antFired,
+        updated_at: Date.now(),
+      };
+
+      store.put(record);
+
+      // Agendar gatilho nativo no SO (NotificationTriggers) se suportado pelo navegador
+      scheduleNativeNotificationTrigger(record, 'exec', targetTimestamp).catch(() => {});
+      if (antTimestamp && antTimestamp > Date.now()) {
+        scheduleNativeNotificationTrigger(record, 'ant', antTimestamp).catch(() => {});
+      }
+    }
+
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
   });
