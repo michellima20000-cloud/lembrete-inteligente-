@@ -93,7 +93,10 @@ class SoundAlertManager {
           if (ctx && ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
-          if (this.loopAudioElement && this.loopAudioElement.paused && this.isRinging) {
+          if (this.isRinging) {
+            // Force re-triggering ringing on any user tap/touch to break autoplay suppression
+            this.startRingingAlarm();
+          } else if (this.loopAudioElement && this.loopAudioElement.paused && this.isRinging) {
             if (!this.audioPlayPromise) {
               this.audioPlayPromise = this.loopAudioElement.play();
               this.audioPlayPromise
@@ -107,7 +110,10 @@ class SoundAlertManager {
       };
       window.addEventListener('click', unlockAudio, { passive: true });
       window.addEventListener('touchstart', unlockAudio, { passive: true });
+      window.addEventListener('pointerdown', unlockAudio, { passive: true });
       window.addEventListener('keydown', unlockAudio, { passive: true });
+      window.addEventListener('focus', unlockAudio, { passive: true });
+      window.addEventListener('pageshow', unlockAudio, { passive: true });
     }
   }
 

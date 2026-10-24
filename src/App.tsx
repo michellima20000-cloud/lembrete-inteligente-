@@ -14,8 +14,8 @@ function MainApp() {
   const { isAuthenticated, isAuthReady } = useUser();
   const [showManualModal, setShowManualModal] = useState(false);
 
-  // Loading state while Firebase checks auth token
-  if (!isAuthReady) {
+  // Loading state while Firebase checks auth token (only if no cached user session)
+  if (!isAuthReady && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
         <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-2xl shadow-lg shadow-indigo-600/30 animate-pulse">

@@ -46,7 +46,16 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return null;
     }
   });
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(() => {
+    try {
+      return !!(
+        localStorage.getItem('lembrete_authenticated_user') ||
+        localStorage.getItem('lembrete_guest_user')
+      );
+    } catch {
+      return false;
+    }
+  });
   const [authError, setAuthError] = useState<string | null>(null);
   const [recentEmails, setRecentEmails] = useState<string[]>(() => {
     try {

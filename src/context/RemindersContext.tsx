@@ -46,7 +46,27 @@ const RemindersContext = createContext<RemindersContextType | null>(null);
 
 export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useUser();
-  const [reminders, setReminders] = useState<Lembrete[]>([]);
+  const [reminders, setReminders] = useState<Lembrete[]>(() => {
+    try {
+      const storedAuth = localStorage.getItem('lembrete_authenticated_user');
+      const storedGuest = localStorage.getItem('lembrete_guest_user');
+      const activeUser = storedAuth ? JSON.parse(storedAuth) : (storedGuest ? JSON.parse(storedGuest) : null);
+      if (activeUser?.id) {
+        const saved = localStorage.getItem(`lembretes_isolated_${activeUser.id}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            parsed.sort(
+              (a: Lembrete, b: Lembrete) =>
+                new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
+            );
+            return parsed;
+          }
+        }
+      }
+    } catch {}
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessingAi, setIsProcessingAi] = useState(false);
   const [lastAiResponse, setLastAiResponse] = useState<AiParseResponse | null>(null);
@@ -56,7 +76,23 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isPushSubscribed, setIsPushSubscribed] = useState(false);
   const [isFirestoreSyncing, setIsFirestoreSyncing] = useState(false);
 
-  const triggeredIdsRef = useRef<Set<string>>(new Set());
+  const triggeredIdsRef = useRef<Set<string>>((() => {
+    try {
+      const saved = sessionStorage.getItem('lembrete_triggered_keys');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set<string>();
+  })());
+
+  const markKeyAsTriggered = useCallback((key: string) => {
+    triggeredIdsRef.current.add(key);
+    try {
+      sessionStorage.setItem(
+        'lembrete_triggered_keys',
+        JSON.stringify(Array.from(triggeredIdsRef.current))
+      );
+    } catch {}
+  }, []);
 
   // Helper to load isolated partition
   const loadLocalPartition = useCallback((userId: string): Lembrete[] => {
@@ -235,9 +271,11 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     if (!currentUser?.id) return;
 
-    triggeredIdsRef.current.clear();
-    setReminders([]);
-    setActiveAlarmReminder(null);
+    // Keep cached partition immediately available so timers and UI never reset to empty
+    const local = loadLocalPartition(currentUser.id);
+    if (local && local.length > 0) {
+      setReminders(local);
+    }
     fetchReminders();
 
     // Only attach Firestore realtime listener if user is authenticated with Firebase Auth
@@ -349,6 +387,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Check due reminders and fire full audio + notification + modal alarm
   const checkDueReminders = useCallback(() => {
+    if (!reminders || reminders.length === 0) return;
     const nowMs = Date.now();
 
     reminders.forEach((item) => {
@@ -362,38 +401,38 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const antMin = item.antecedencia_minutos || 0;
 
-      // 1. Antecedência notification (if configured and due)
+      // 1. Antecedência notification (if configured and due within last 30 minutes)
       if (antMin > 0) {
         const antTriggerTime = targetTime - antMin * 60 * 1000;
         const diffAnt = nowMs - antTriggerTime;
         const antKey = `ant_${item.id}_${antMin}_${item.data_hora_execucao}`;
-        if (diffAnt >= 0 && diffAnt < 15 * 60 * 1000 && !triggeredIdsRef.current.has(antKey)) {
-          triggeredIdsRef.current.add(antKey);
+        if (diffAnt >= 0 && diffAnt < 30 * 60 * 1000 && !triggeredIdsRef.current.has(antKey)) {
+          markKeyAsTriggered(antKey);
           soundAlert.startRingingAlarm();
           setActiveAlarmReminder(item);
           triggerPushNotification(item, true);
         }
       }
 
-      // 2. Exact Execution Time alarm (when time arrives)
+      // 2. Exact Execution Time alarm (when time arrives or up to 24h ago)
       const diffExec = nowMs - targetTime;
       const execKey = `exec_${item.id}_${item.data_hora_execucao}`;
       if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(execKey)) {
-        triggeredIdsRef.current.add(execKey);
+        markKeyAsTriggered(execKey);
         soundAlert.startRingingAlarm();
         setActiveAlarmReminder(item);
         triggerPushNotification(item, false);
       }
     });
-  }, [reminders]);
+  }, [reminders, markKeyAsTriggered]);
 
-  // Real-time tick to check reminders due using both interval and background Web Worker
+  // Real-time tick to check reminders due using interval, background Web Worker, and multi-event wake
   useEffect(() => {
     checkDueReminders();
 
     const interval = setInterval(checkDueReminders, 2000);
 
-    // Dedicated background Web Worker (immune to browser inactive tab timer throttling)
+    // Dedicated background Web Worker (immune to inactive tab timer throttling)
     let worker: Worker | null = null;
     try {
       worker = new Worker('/alarmWorker.js');
@@ -405,13 +444,19 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       console.warn('Web Worker fallback to interval:', e);
     }
 
-    // Instant trigger when user switches back or unlocks screen
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkDueReminders();
+    // Instant alarm evaluation and AudioContext unfreezing when user returns, unlocks screen, or taps
+    const handleImmediateWake = () => {
+      checkDueReminders();
+      if (soundAlert.getIsRinging() || activeAlarmReminder) {
+        soundAlert.startRingingAlarm();
       }
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    document.addEventListener('visibilitychange', handleImmediateWake);
+    window.addEventListener('focus', handleImmediateWake);
+    window.addEventListener('pageshow', handleImmediateWake);
+    window.addEventListener('pointerdown', handleImmediateWake, { passive: true });
+    window.addEventListener('touchstart', handleImmediateWake, { passive: true });
 
     return () => {
       clearInterval(interval);
@@ -421,9 +466,33 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           worker.terminate();
         } catch {}
       }
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleImmediateWake);
+      window.removeEventListener('focus', handleImmediateWake);
+      window.removeEventListener('pageshow', handleImmediateWake);
+      window.removeEventListener('pointerdown', handleImmediateWake);
+      window.removeEventListener('touchstart', handleImmediateWake);
     };
-  }, [checkDueReminders]);
+  }, [checkDueReminders, activeAlarmReminder]);
+
+  // Mobile Screen Wake Lock: keeps device screen on and active while alarm is ringing
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+    if (activeAlarmReminder && typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      (navigator as any).wakeLock
+        .request('screen')
+        .then((sentinel: any) => {
+          wakeLockSentinel = sentinel;
+        })
+        .catch(() => {});
+    }
+    return () => {
+      if (wakeLockSentinel) {
+        try {
+          wakeLockSentinel.release();
+        } catch {}
+      }
+    };
+  }, [activeAlarmReminder]);
 
   // Tab Title Flashing alert when alarm is ringing in background tab
   useEffect(() => {

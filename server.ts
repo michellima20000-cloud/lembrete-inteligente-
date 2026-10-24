@@ -978,24 +978,26 @@ setInterval(async () => {
       const antMin = reminder.antecedencia_minutos || 0;
 
       // 1. Antecedência notification (if configured and due)
-      if (antMin > 0) {
+      if (antMin > 0 && subscriptions.length > 0) {
         const antecedenciaTime = execTime - antMin * 60 * 1000;
         const diffAnt = now - antecedenciaTime;
         const antKey = `ant_${reminder.id}_${antMin}_${reminder.data_hora_execucao}`;
 
-        if (diffAnt >= 0 && diffAnt < 15 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+        if (diffAnt >= 0 && diffAnt < 30 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
           serverTriggeredReminders.add(antKey);
           await sendBackgroundPushNotification(reminder, userId, subscriptions, true);
         }
       }
 
       // 2. Exact Execution Time alarm (when time arrives)
-      const diffExec = now - execTime;
-      const execKey = `exec_${reminder.id}_${reminder.data_hora_execucao}`;
+      if (subscriptions.length > 0) {
+        const diffExec = now - execTime;
+        const execKey = `exec_${reminder.id}_${reminder.data_hora_execucao}`;
 
-      if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
-        serverTriggeredReminders.add(execKey);
-        await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
+        if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+          serverTriggeredReminders.add(execKey);
+          await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
+        }
       }
     }
   }
