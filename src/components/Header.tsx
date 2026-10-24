@@ -8,7 +8,15 @@ import { soundAlert } from '../utils/audioAlert';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
-  const { soundEnabled, toggleSound, isPushSubscribed, subscribePush, testPushNotification } = useReminders();
+  const {
+    soundEnabled,
+    toggleSound,
+    isPushSubscribed,
+    subscribePush,
+    testPushNotification,
+    pingStatus,
+    triggerManualPing,
+  } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
 
@@ -26,10 +34,24 @@ export const Header: React.FC = () => {
               </span>
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <h1 className="text-base font-black tracking-tight text-white">
                   Lembrete <span className="text-indigo-400">Inteligente</span>
                 </h1>
+                <button
+                  onClick={() => triggerManualPing()}
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${
+                    pingStatus.online
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                      : 'bg-rose-500/15 text-rose-400 border border-rose-500/30 animate-pulse'
+                  }`}
+                  title={`Ping em tempo real: ${pingStatus.online ? 'Conectado em tempo real' : 'Reconectando...'} (${pingStatus.latencyMs}ms). Clique para forçar teste de ping.`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${pingStatus.online ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                  <span className="text-[10px]">
+                    {pingStatus.online ? `Ping ${pingStatus.latencyMs}ms` : 'Reconectando'}
+                  </span>
+                </button>
               </div>
             </div>
           </div>

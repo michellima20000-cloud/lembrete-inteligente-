@@ -40,6 +40,8 @@ interface RemindersContextType {
   toggleSound: () => void;
   testSound: () => void;
   isFirestoreSyncing: boolean;
+  pingStatus: { online: boolean; latencyMs: number; serverTimestamp: number; lastPingTime: number; pendingReminders: number };
+  triggerManualPing: () => Promise<void>;
 }
 
 const RemindersContext = createContext<RemindersContextType | null>(null);
@@ -75,6 +77,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [isPushSubscribed, setIsPushSubscribed] = useState(false);
   const [isFirestoreSyncing, setIsFirestoreSyncing] = useState(false);
+  const [pingStatus, setPingStatus] = useState(() => pushManager.getPingStatus());
 
   const triggeredIdsRef = useRef<Set<string>>((() => {
     try {
@@ -222,6 +225,22 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       unsubscribeSnooze();
     };
   }, [currentUser?.id, fetchReminders]);
+
+  // Real-time Background Ping & Cloud Heartbeat Engine
+  useEffect(() => {
+    const unsubPing = pushManager.onPing((status) => {
+      setPingStatus(status);
+    });
+    pushManager.startRealtimeBackgroundPing(currentUser?.id);
+    return () => {
+      unsubPing();
+    };
+  }, [currentUser?.id]);
+
+  const triggerManualPing = async () => {
+    const status = await pushManager.sendPing(currentUser?.id);
+    setPingStatus(status);
+  };
 
   const requestNotificationPermission = async (): Promise<boolean> => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -900,6 +919,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         toggleSound,
         testSound,
         isFirestoreSyncing,
+        pingStatus,
+        triggerManualPing,
       }}
     >
       {children}

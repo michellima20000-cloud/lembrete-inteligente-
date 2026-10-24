@@ -372,10 +372,16 @@ self.addEventListener('activate', (event) => {
 
 // Ticker em memória enquanto a thread do Service Worker estiver ativa
 let tickInterval = null;
+let pingCounter = 0;
 function startKeepAliveTick() {
   if (!tickInterval) {
     tickInterval = setInterval(() => {
       verifyAndTriggerDueAlarms().catch(() => {});
+      pingCounter++;
+      // Ping o servidor a cada ~16 segundos para manter o container e o agendador aquecidos
+      if (pingCounter % 4 === 0) {
+        fetch('/api/ping', { method: 'GET', cache: 'no-store' }).catch(() => {});
+      }
     }, 4000);
   }
 }

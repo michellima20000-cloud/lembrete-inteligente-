@@ -425,6 +425,123 @@ class PushManagerService {
       this.snoozeListeners.delete(callback);
     };
   }
+
+  // ==========================================
+  // REAL-TIME BACKGROUND PING & HEARTBEAT ENGINE
+  // ==========================================
+  private pingListeners: Set<(status: { online: boolean; latencyMs: number; serverTimestamp: number; lastPingTime: number; pendingReminders: number }) => void> = new Set();
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private currentPingUserId: string | null = null;
+  private lastPingStatus = {
+    online: true,
+    latencyMs: 15,
+    serverTimestamp: Date.now(),
+    lastPingTime: Date.now(),
+    pendingReminders: 0,
+  };
+
+  public getPingStatus() {
+    return this.lastPingStatus;
+  }
+
+  public onPing(callback: (status: { online: boolean; latencyMs: number; serverTimestamp: number; lastPingTime: number; pendingReminders: number }) => void): () => void {
+    this.pingListeners.add(callback);
+    callback(this.lastPingStatus);
+    return () => {
+      this.pingListeners.delete(callback);
+    };
+  }
+
+  public async sendPing(userId?: string) {
+    const effectiveUser = userId || this.currentPingUserId || '';
+    const start = performance.now();
+    const clientOffset = new Date().getTimezoneOffset();
+
+    try {
+      const url = `/api/ping?user_id=${encodeURIComponent(effectiveUser)}&timezone_offset_minutes=${clientOffset}&_t=${Date.now()}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        keepalive: true,
+        headers: {
+          Accept: 'application/json',
+          'x-timezone-offset': String(clientOffset),
+        },
+      });
+
+      const latencyMs = Math.max(1, Math.round(performance.now() - start));
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        this.lastPingStatus = {
+          online: true,
+          latencyMs,
+          serverTimestamp: data.serverTimestamp || Date.now(),
+          lastPingTime: Date.now(),
+          pendingReminders: data.pending_reminders || 0,
+        };
+      } else {
+        this.lastPingStatus = {
+          ...this.lastPingStatus,
+          online: false,
+          latencyMs,
+          lastPingTime: Date.now(),
+        };
+      }
+    } catch (e) {
+      this.lastPingStatus = {
+        ...this.lastPingStatus,
+        online: false,
+        lastPingTime: Date.now(),
+      };
+    }
+
+    // Notify Service Worker to check scheduled alarms on every ping cycle
+    try {
+      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        const reg = await (this.registration || navigator.serviceWorker.ready);
+        const target = reg?.active || navigator.serviceWorker.controller;
+        if (target) {
+          target.postMessage({ type: 'PING', userId: effectiveUser });
+        }
+      }
+    } catch {}
+
+    // Broadcast status to UI subscribers
+    this.pingListeners.forEach((cb) => {
+      try { cb(this.lastPingStatus); } catch {}
+    });
+
+    return this.lastPingStatus;
+  }
+
+  public startRealtimeBackgroundPing(userId?: string) {
+    if (userId) {
+      this.currentPingUserId = userId;
+    }
+
+    // Trigger immediate ping
+    this.sendPing(userId).catch(() => {});
+
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+    }
+
+    // Ticks every 8 seconds to keep server & cloud container alive and alarms hot
+    this.pingInterval = setInterval(() => {
+      this.sendPing(this.currentPingUserId || undefined).catch(() => {});
+    }, 8000);
+
+    // Keep connection active and instant re-ping when user switches tabs or locks/unlocks
+    if (typeof document !== 'undefined') {
+      const onWake = () => {
+        this.sendPing(this.currentPingUserId || undefined).catch(() => {});
+      };
+      document.addEventListener('visibilitychange', onWake);
+      window.addEventListener('focus', onWake);
+      window.addEventListener('online', onWake);
+    }
+  }
 }
 
 export const pushManager = new PushManagerService();

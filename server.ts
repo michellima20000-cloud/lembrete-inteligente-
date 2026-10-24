@@ -994,6 +994,33 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
   return res.json({ status: 'sucesso', count: processedReminders.length });
 });
 
+// API: Real-time Ping and Background Heartbeat
+app.all(['/api/ping', '/api/ping/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+
+  const userId = (req.query.user_id as string) || (req.headers['x-user-id'] as string) || req.body?.user_id;
+  const clientOffset = getClientOffset(req, userId);
+  if (userId) {
+    userTimezoneOffsets.set(userId, clientOffset);
+  }
+
+  const userItems = userId ? (userLembretes.get(userId) || []) : [];
+  const pendingCount = userItems.filter((i) => i.status_tarefa !== 'concluído').length;
+  const subsCount = userId ? (userPushSubscriptions.get(userId) || []).length : 0;
+
+  return res.json({
+    status: 'online',
+    serverTime: new Date().toISOString(),
+    serverTimestamp: Date.now(),
+    timezone_offset_minutes: clientOffset,
+    user_id: userId || null,
+    pending_reminders: pendingCount,
+    push_subscriptions: subsCount,
+    active_alarms_runner: true,
+  });
+});
+
 // Explicit API 404 boundary: prevents unmatched /api/* requests from falling through to Vite SPA index.html
 app.all(['/api', '/api/*'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
