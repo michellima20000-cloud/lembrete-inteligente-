@@ -4,6 +4,7 @@ import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { UserAccountModal } from './UserAccountModal';
+import { soundAlert } from '../utils/audioAlert';
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
@@ -39,9 +40,17 @@ export const Header: React.FC = () => {
             <PWAInstallButton />
 
             {/* Push Notifications Status & Quick Toggle */}
+            {/* Push Notifications Status & Quick Toggle */}
             <button
-              onClick={isPushSubscribed ? testPushNotification : subscribePush}
-              className={`p-2 rounded-xl transition-colors cursor-pointer relative ${
+              onClick={() => {
+                soundAlert.startBackgroundKeepAlive();
+                if (isPushSubscribed) {
+                  testPushNotification();
+                } else {
+                  subscribePush();
+                }
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer relative ${
                 isPushSubscribed
                   ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-900/60'
                   : 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-900/60 animate-pulse'
@@ -53,6 +62,9 @@ export const Header: React.FC = () => {
               }
             >
               {isPushSubscribed ? <BellRing className="w-4 h-4 text-emerald-400" /> : <Bell className="w-4 h-4" />}
+              <span className="hidden sm:inline text-[11px] font-bold">
+                {isPushSubscribed ? '2º Plano 100%' : 'Ativar 2º Plano'}
+              </span>
               {isPushSubscribed && (
                 <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>

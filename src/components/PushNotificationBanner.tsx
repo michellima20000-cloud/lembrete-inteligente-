@@ -38,13 +38,27 @@ export const PushNotificationBanner: React.FC = () => {
     setIsLoading(true);
     setTestResult(null);
     try {
+      soundAlert.startBackgroundKeepAlive();
       const res = await subscribePush();
       if (res && res.success) {
         soundAlert.playSuccess();
         setTestResult({
           success: true,
-          message: 'Notificações ativadas! Teste abaixo para verificar a vibração e alarme.',
+          message: 'Alarmes ativados! Enviando disparo de teste para seu celular...',
         });
+        // Auto-send verification push after 600ms so user immediately sees device vibrate and alert
+        setTimeout(() => {
+          testPushNotification()
+            .then((tRes) => {
+              if (tRes && tRes.success) {
+                setTestResult({
+                  success: true,
+                  message: '✅ Disparo em segundo plano 100% confirmado e ativo no seu celular!',
+                });
+              }
+            })
+            .catch(() => {});
+        }, 600);
       } else {
         setTestResult(res || {
           success: false,
@@ -64,6 +78,7 @@ export const PushNotificationBanner: React.FC = () => {
   const handleTest = async () => {
     setIsLoading(true);
     try {
+      soundAlert.startBackgroundKeepAlive();
       const res = await testPushNotification();
       setTestResult(res);
       if (res.success) {

@@ -432,7 +432,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const antKey = `ant_${item.id}_${antMin}_${item.data_hora_execucao}`;
         if (diffAnt >= 0 && diffAnt < 30 * 60 * 1000 && !triggeredIdsRef.current.has(antKey)) {
           markKeyAsTriggered(antKey);
-          soundAlert.startRingingAlarm();
+          soundAlert.startRingingAlarm(item.titulo);
           setActiveAlarmReminder(item);
           triggerPushNotification(item, true);
         }
@@ -443,7 +443,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const execKey = `exec_${item.id}_${item.data_hora_execucao}`;
       if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !triggeredIdsRef.current.has(execKey)) {
         markKeyAsTriggered(execKey);
-        soundAlert.startRingingAlarm();
+        soundAlert.startRingingAlarm(item.titulo);
         setActiveAlarmReminder(item);
         triggerPushNotification(item, false);
       }
@@ -453,8 +453,9 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Real-time tick to check reminders due using interval, background Web Worker, and multi-event wake
   useEffect(() => {
     checkDueReminders();
+    soundAlert.startBackgroundKeepAlive();
 
-    const interval = setInterval(checkDueReminders, 2000);
+    const interval = setInterval(checkDueReminders, 1500);
 
     // Dedicated background Web Worker (immune to inactive tab timer throttling)
     let worker: Worker | null = null;

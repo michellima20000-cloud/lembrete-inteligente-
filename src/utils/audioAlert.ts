@@ -75,11 +75,51 @@ function createAlarmWavDataUri(): string {
   return 'data:audio/wav;base64,' + btoa(binary);
 }
 
+function createSilentWavDataUri(): string {
+  // Generate 1-second clean digital silence WAV to keep browser audio thread active
+  const sampleRate = 8000;
+  const numChannels = 1;
+  const duration = 1.0;
+  const totalSamples = Math.floor(sampleRate * duration);
+  const dataSize = totalSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * 2, true);
+  view.setUint16(32, numChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return 'data:audio/wav;base64,' + btoa(binary);
+}
+
 class SoundAlertManager {
   private audioCtx: AudioContext | null = null;
   private isSoundEnabled = true;
   private isRinging = false;
   private loopAudioElement: HTMLAudioElement | null = null;
+  private keepAliveAudioElement: HTMLAudioElement | null = null;
+  private isKeepAliveActive = false;
   private audioPlayPromise: Promise<void> | null = null;
   private webAudioInterval: ReturnType<typeof setInterval> | null = null;
   private vibrationInterval: ReturnType<typeof setInterval> | null = null;
@@ -93,6 +133,9 @@ class SoundAlertManager {
           if (ctx && ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
+          // Activate background media session to prevent mobile tab freezing
+          this.startBackgroundKeepAlive();
+
           if (this.isRinging) {
             // Force re-triggering ringing on any user tap/touch to break autoplay suppression
             this.startRingingAlarm();
@@ -259,13 +302,86 @@ class SoundAlertManager {
     }
   }
 
+  public startBackgroundKeepAlive() {
+    if (typeof window === 'undefined') return;
+    if (this.isKeepAliveActive && this.keepAliveAudioElement && !this.keepAliveAudioElement.paused) return;
+
+    try {
+      if (!this.keepAliveAudioElement) {
+        const uri = createSilentWavDataUri();
+        const audio = new Audio(uri);
+        audio.loop = true;
+        audio.volume = 0.001; // Digital silence: prevents OS from freezing background JS timers
+        audio.preload = 'auto';
+        this.keepAliveAudioElement = audio;
+      }
+
+      this.keepAliveAudioElement.play().then(() => {
+        this.isKeepAliveActive = true;
+        this.registerMediaSession(false);
+      }).catch((e) => {
+        this.handleAudioError(e);
+      });
+    } catch {}
+  }
+
+  public registerMediaSession(isAlarmRinging = false, reminderTitle?: string) {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try {
+        if (isAlarmRinging) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: `🚨 [ALARME] ${reminderTitle || 'Compromisso Agendado'}`,
+            artist: 'Lembrete Inteligente',
+            album: 'Alarme em Execução',
+            artwork: [
+              { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+              { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+            ],
+          });
+        } else {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: '⏰ Monitoramento de Alarmes Ativo',
+            artist: 'Lembrete Inteligente',
+            album: 'Execução em Segundo Plano 100%',
+            artwork: [
+              { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+              { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+            ],
+          });
+        }
+
+        navigator.mediaSession.setActionHandler('play', () => {
+          if (this.isRinging) {
+            this.startRingingAlarm(reminderTitle);
+          } else {
+            this.startBackgroundKeepAlive();
+          }
+        });
+
+        navigator.mediaSession.setActionHandler('pause', () => {
+          this.stopRingingAlarm();
+        });
+
+        navigator.mediaSession.setActionHandler('stop', () => {
+          this.stopRingingAlarm();
+        });
+      } catch {}
+    }
+  }
+
   /**
    * Starts continuous, loud, looping alarm ringing that NEVER stops on its own.
    * Continues sounding and vibrating UNTIL the user explicitly clicks Concluir or Adiar!
    */
-  public startRingingAlarm() {
+  public startRingingAlarm(reminderTitle?: string) {
     if (!this.isSoundEnabled) return;
     this.isRinging = true;
+
+    // Pause silent keep-alive while ringing loud alarm
+    if (this.keepAliveAudioElement && !this.keepAliveAudioElement.paused) {
+      try { this.keepAliveAudioElement.pause(); } catch {}
+    }
+    this.registerMediaSession(true, reminderTitle);
 
     // 1. Play continuous HTML5 looping audio (immune to background tab throttling)
     try {
@@ -339,6 +455,7 @@ class SoundAlertManager {
    */
   public stopRingingAlarm() {
     this.isRinging = false;
+    this.registerMediaSession(false);
 
     // Stop HTML5 looping audio safely without interrupting in-flight play()
     if (this.loopAudioElement) {
@@ -381,6 +498,13 @@ class SoundAlertManager {
         navigator.vibrate(0);
       } catch {}
     }
+
+    // Resume silent background keep-alive so subsequent reminders stay active in background
+    setTimeout(() => {
+      if (!this.isRinging) {
+        this.startBackgroundKeepAlive();
+      }
+    }, 400);
   }
 
   public playAlarm() {

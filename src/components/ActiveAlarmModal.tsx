@@ -10,7 +10,7 @@ export const ActiveAlarmModal: React.FC = () => {
   // NEVER stops on its own until user takes explicit action (Concluir, Adiar, or Dispensar)
   useEffect(() => {
     if (activeAlarmReminder) {
-      soundAlert.startRingingAlarm();
+      soundAlert.startRingingAlarm(activeAlarmReminder.titulo);
     } else {
       soundAlert.stopRingingAlarm();
     }
