@@ -16,5 +16,14 @@
     "salt": "aebc207abac373aad0bc79954b765155",
     "avatarCor": "#4f46e5",
     "criado_em": "2026-10-23T17:19:42.252Z"
+  },
+  "mayalimaalves50@gmail.com": {
+    "id": "CiEoITiFP2PqVjFYzu0HZ3TXBmt2",
+    "email": "mayalimaalves50@gmail.com",
+    "nome": "mayalimaalves50",
+    "passwordHash": "8eabc58e6167b20ce46d7da688217c79f83123af3ef578a1e9db090ea51f677af8b961e7c536a17cc2bc6bd93f7927c4f53dfe60ea3915f8f705f978a1f66013",
+    "salt": "2cb6f0b53187e2822ff4b56e661d8259",
+    "avatarCor": "#4f46e5",
+    "criado_em": "2026-10-24T15:09:32.157Z"
   }
 }

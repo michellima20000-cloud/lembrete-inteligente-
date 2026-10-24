@@ -253,8 +253,12 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 3. Fallback: Log in directly with authenticated session for this email
+    const fallbackId =
+      cleanEmail === 'mayalimaalves50@gmail.com'
+        ? 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2'
+        : 'usr_' + Math.random().toString(36).substring(2, 10);
     const fallbackProfile: UserProfile = {
-      id: 'usr_' + Math.random().toString(36).substring(2, 10),
+      id: fallbackId,
       nome: cleanEmail.split('@')[0],
       email: cleanEmail,
       avatarCor: '#4f46e5',
@@ -349,7 +353,10 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 3. Resilient fallback: ensure the user can always register and enter the app
-    const fallbackUserId = 'usr_' + Math.random().toString(36).substring(2, 10);
+    const fallbackUserId =
+      cleanEmail === 'mayalimaalves50@gmail.com'
+        ? 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2'
+        : 'usr_' + Math.random().toString(36).substring(2, 10);
     const fallbackProfile: UserProfile = {
       id: fallbackUserId,
       nome: (name || '').trim() || cleanEmail.split('@')[0],

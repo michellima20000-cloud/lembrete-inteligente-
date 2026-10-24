@@ -3,7 +3,7 @@
 
 // Fallback VAPID public key matching the server's persistent .vapid-keys.json
 export const FALLBACK_VAPID_PUBLIC_KEY =
-  'BEfgpvj5Gt5eGfVHEENkC84jATpF3-rSL6tWMNRe2gHEfX2pFAbBaH9SN2KOOsgLy3EvxwwcrqnJO-82CHusljg';
+  'BNja6ZX5Kc0-J7HZ1wQclvx_-eHNcimn5gdXT60zsb0cJGvDr447Hr_W9SdM7IF790-LH4dypt_e0dD8EluHklA';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

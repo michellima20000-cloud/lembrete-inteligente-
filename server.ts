@@ -221,7 +221,12 @@ app.all(['/api/auth/login', '/api/auth/login/'], (req: Request, res: Response) =
   // If not in authAccounts yet: auto-provision account seamlessly
   const salt = crypto.randomBytes(16).toString('hex');
   const passwordHash = hashPassword(passToTest || rawPassToTest, salt);
-  const userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  
+  // Cross-auth continuity: Map known Firebase user email to their Firebase UID
+  let userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  if (cleanEmail === 'mayalimaalves50@gmail.com') {
+    userId = 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2';
+  }
   const userName = cleanEmail.split('@')[0];
 
   const newAccount: AuthAccount = {
@@ -306,7 +311,10 @@ app.all(['/api/auth/register', '/api/auth/register/'], (req: Request, res: Respo
 
   const salt = crypto.randomBytes(16).toString('hex');
   const passwordHash = hashPassword(cleanPass, salt);
-  const userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  let userId = 'usr_' + crypto.createHash('md5').update(cleanEmail).digest('hex').substring(0, 16);
+  if (cleanEmail === 'mayalimaalves50@gmail.com') {
+    userId = 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2';
+  }
   const displayName = (nome || '').trim() || cleanEmail.split('@')[0];
 
   const newAccount: AuthAccount = {

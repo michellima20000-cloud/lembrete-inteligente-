@@ -45,7 +45,7 @@ interface RemindersContextType {
 const RemindersContext = createContext<RemindersContextType | null>(null);
 
 export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useUser();
+  const { currentUser, firebaseUser } = useUser();
   const [reminders, setReminders] = useState<Lembrete[]>(() => {
     try {
       const storedAuth = localStorage.getItem('lembrete_authenticated_user');
@@ -134,12 +134,19 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const data = await res.json();
         if (data.lembretes && Array.isArray(data.lembretes)) {
           const verified = data.lembretes.filter((item: Lembrete) => item.user_id === currentUser.id);
-          verified.sort((a: Lembrete, b: Lembrete) =>
+          const currentLocal: Lembrete[] = loadLocalPartition(currentUser.id);
+          const map = new Map<string, Lembrete>();
+          // Preserve local items first
+          currentLocal.forEach((i: Lembrete) => map.set(i.id, i));
+          // Overlay verified server items
+          verified.forEach((i: Lembrete) => map.set(i.id, i));
+          const merged = Array.from(map.values());
+          merged.sort((a: Lembrete, b: Lembrete) =>
             new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
           );
-          setReminders(verified);
-          saveLocalPartition(currentUser.id, verified);
-          pushManager.syncReminders(currentUser.id, verified);
+          setReminders(merged);
+          saveLocalPartition(currentUser.id, merged);
+          pushManager.syncReminders(currentUser.id, merged);
         }
       }
     } catch (e) {
@@ -279,7 +286,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     fetchReminders();
 
     // Only attach Firestore realtime listener if user is authenticated with Firebase Auth
-    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) {
+    if (!firebaseUser || !auth.currentUser || auth.currentUser.uid !== currentUser.id) {
       setIsFirestoreSyncing(false);
       return;
     }
@@ -302,7 +309,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const localItems = loadLocalPartition(currentUser.id);
           const fbIdSet = new Set(fbItems.map((i) => i.id));
           const missingInFirestore = localItems.filter((i) => !fbIdSet.has(i.id));
-          if (missingInFirestore.length > 0) {
+          if (missingInFirestore.length > 0 && auth.currentUser && auth.currentUser.uid === currentUser.id) {
             missingInFirestore.forEach((item) => {
               setDoc(doc(db, 'users', currentUser.id, 'reminders', item.id), item).catch((err) => {
                 handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.id}/reminders/${item.id}`);
@@ -323,16 +330,22 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         (error) => {
           handleFirestoreError(error, OperationType.GET, remindersPath);
           setIsFirestoreSyncing(false);
+          try {
+            unsubscribe();
+          } catch {}
         }
       );
     } catch (err) {
       console.warn('Firestore snapshot setup deferred to offline/REST mode:', err);
+      setIsFirestoreSyncing(false);
     }
 
     return () => {
-      unsubscribe();
+      try {
+        unsubscribe();
+      } catch {}
     };
-  }, [currentUser?.id, fetchReminders, loadLocalPartition, saveLocalPartition]);
+  }, [currentUser?.id, firebaseUser, fetchReminders, loadLocalPartition, saveLocalPartition]);
 
   // Send Background Notification via Service Worker (Android Chrome / PWA) or Notification API
   const triggerPushNotification = async (item: Lembrete, isAntecedencia = false) => {
