@@ -171,16 +171,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     pushManager.getExistingSubscription().then((sub) => {
       setIsPushSubscribed(!!sub);
       if (currentUser?.id) {
-        if (sub) {
-          fetch('/api/push/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              user_id: currentUser.id,
-              subscription: sub.toJSON(),
-            }),
-          }).catch(() => {});
-        } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        if (sub || (typeof Notification !== 'undefined' && Notification.permission === 'granted')) {
           pushManager.subscribeToPush(currentUser.id).then((res) => {
             if (res.success) setIsPushSubscribed(true);
           }).catch(() => {});

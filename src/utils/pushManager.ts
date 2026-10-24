@@ -3,7 +3,8 @@
 
 // Fallback VAPID public key matching the server's persistent .vapid-keys.json
 export const FALLBACK_VAPID_PUBLIC_KEY =
-  'BNja6ZX5Kc0-J7HZ1wQclvx_-eHNcimn5gdXT60zsb0cJGvDr447Hr_W9SdM7IF790-LH4dypt_e0dD8EluHklA';
+  'BB9hiMXS2NLqKR7r8LR44b1lB1BEnB_l3iphQ0XQQf-7lPUzBAC-4vaOfrvIvybpbsAORqd4S7EeZ0Tw8KVlPZg';
+
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -273,14 +274,19 @@ class PushManagerService {
 
       // 5. Send subscription to backend linked to user_id
       const subJson = subscription.toJSON();
+      const clientOffset = new Date().getTimezoneOffset();
       let saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(
         '/api/push/subscribe',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-timezone-offset': String(clientOffset),
+          },
           body: JSON.stringify({
             user_id: userId,
             subscription: subJson,
+            timezone_offset_minutes: clientOffset,
           }),
         }
       );
@@ -289,7 +295,7 @@ class PushManagerService {
       if (!saveResult.ok) {
         console.log('[PushManager] Tentando rota de contingência para registro push...');
         await new Promise((r) => setTimeout(r, 400));
-        const queryUrl = `/api/push/subscribe?user_id=${encodeURIComponent(userId)}&subscription=${encodeURIComponent(JSON.stringify(subJson))}`;
+        const queryUrl = `/api/push/subscribe?user_id=${encodeURIComponent(userId)}&timezone_offset_minutes=${clientOffset}&subscription=${encodeURIComponent(JSON.stringify(subJson))}`;
         saveResult = await safeFetchJson<{ status: string; mensagem?: string }>(queryUrl);
       }
 
@@ -387,14 +393,18 @@ class PushManagerService {
 
     // 2. Sync with backend server
     try {
+      const clientOffset = new Date().getTimezoneOffset();
       const res = await safeFetchJson('/api/reminders/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, lembretes }),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-timezone-offset': String(clientOffset),
+        },
+        body: JSON.stringify({ user_id: userId, lembretes, timezone_offset_minutes: clientOffset }),
       });
       if (!res.ok) {
         await safeFetchJson(
-          `/api/reminders/sync?user_id=${encodeURIComponent(userId)}&lembretes=${encodeURIComponent(JSON.stringify(lembretes))}`
+          `/api/reminders/sync?user_id=${encodeURIComponent(userId)}&timezone_offset_minutes=${clientOffset}&lembretes=${encodeURIComponent(JSON.stringify(lembretes))}`
         );
       }
     } catch {

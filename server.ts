@@ -38,19 +38,24 @@ app.use('/api', (req: Request, res: Response, next) => {
   next();
 });
 
-// Initialize persistent VAPID keys for Web Push Notifications
+// Initialize persistent fixed VAPID keys for Web Push Notifications
 const VAPID_FILE = path.join(__dirname, '.vapid-keys.json');
-let vapidKeys: { publicKey: string; privateKey: string };
+const DEFAULT_VAPID_KEYS = {
+  publicKey: 'BB9hiMXS2NLqKR7r8LR44b1lB1BEnB_l3iphQ0XQQf-7lPUzBAC-4vaOfrvIvybpbsAORqd4S7EeZ0Tw8KVlPZg',
+  privateKey: 'jeW4GCRDtVQEr8p4WX2DqC3UUHw-F1WuzSW-FrwE9LU',
+};
+let vapidKeys = { ...DEFAULT_VAPID_KEYS };
 
 if (fs.existsSync(VAPID_FILE)) {
   try {
-    vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
+    const loaded = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
+    if (loaded && loaded.publicKey && loaded.privateKey) {
+      vapidKeys = loaded;
+    }
   } catch {
-    vapidKeys = webpush.generateVAPIDKeys();
     try { fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2)); } catch {}
   }
 } else {
-  vapidKeys = webpush.generateVAPIDKeys();
   try { fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2)); } catch {}
 }
 
@@ -108,12 +113,14 @@ const userLembretes = new Map<string, Lembrete[]>();
 const userProfiles = new Map<string, UserProfile>();
 const userPushSubscriptions = new Map<string, webpush.PushSubscription[]>();
 const authAccounts = new Map<string, AuthAccount>();
+const userTimezoneOffsets = new Map<string, number>();
+const serverTriggeredReminders = new Set<string>();
 
 function hashPassword(password: string, salt: string): string {
   return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
 }
 
-// Persistent Cache for push subscriptions, reminders, and accounts across server restarts
+// Persistent Cache for push subscriptions, reminders, accounts, and triggered keys across server restarts
 const DATA_CACHE_FILE = path.join(__dirname, '.push-data-cache.json');
 const AUTH_ACCOUNTS_FILE = path.join(__dirname, '.auth-accounts.json');
 
@@ -131,7 +138,17 @@ function loadCache() {
           userLembretes.set(k, v as Lembrete[]);
         }
       }
-      console.log(`[Cache] Dados restaurados do cache persistente para ${userPushSubscriptions.size} usuário(s) push.`);
+      if (Array.isArray(parsed.serverTriggeredReminders)) {
+        for (const key of parsed.serverTriggeredReminders) {
+          serverTriggeredReminders.add(key);
+        }
+      }
+      if (parsed.userTimezoneOffsets) {
+        for (const [k, v] of Object.entries(parsed.userTimezoneOffsets)) {
+          userTimezoneOffsets.set(k, Number(v));
+        }
+      }
+      console.log(`[Cache] Dados restaurados: ${userPushSubscriptions.size} usuário(s) push, ${serverTriggeredReminders.size} disparos registrados.`);
     }
 
     if (fs.existsSync(AUTH_ACCOUNTS_FILE)) {
@@ -158,6 +175,8 @@ function saveCache() {
     const data = {
       userPushSubscriptions: Object.fromEntries(userPushSubscriptions.entries()),
       userLembretes: Object.fromEntries(userLembretes.entries()),
+      serverTriggeredReminders: Array.from(serverTriggeredReminders).slice(-500),
+      userTimezoneOffsets: Object.fromEntries(userTimezoneOffsets.entries()),
     };
     fs.writeFileSync(DATA_CACHE_FILE, JSON.stringify(data, null, 2));
 
@@ -167,6 +186,57 @@ function saveCache() {
 }
 
 loadCache();
+
+// Helper to extract client timezone offset from request (defaults to Brazil UTC-3: 180 min)
+function getClientOffset(req: Request, userId?: string): number {
+  if (req.body?.timezone_offset_minutes !== undefined) {
+    const off = Number(req.body.timezone_offset_minutes);
+    if (!isNaN(off)) return off;
+  }
+  if (req.query?.timezone_offset_minutes !== undefined) {
+    const off = Number(req.query.timezone_offset_minutes);
+    if (!isNaN(off)) return off;
+  }
+  const headerOffset = req.headers['x-timezone-offset'];
+  if (headerOffset !== undefined) {
+    const off = Number(headerOffset);
+    if (!isNaN(off)) return off;
+  }
+  if (userId && userTimezoneOffsets.has(userId)) {
+    return userTimezoneOffsets.get(userId)!;
+  }
+  return 180; // Standard Brazilian UTC-3 default offset in minutes
+}
+
+// Helper to reliably compute absolute execution timestamp in UTC epoch milliseconds
+function resolveReminderExecutionTimestamp(reminder: Lembrete, userOffset?: number): number {
+  if (typeof reminder.timestamp_execucao === 'number' && !isNaN(reminder.timestamp_execucao) && reminder.timestamp_execucao > 0) {
+    return reminder.timestamp_execucao;
+  }
+
+  let rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
+  if (!rawIso) return 0;
+
+  if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
+    return new Date(rawIso).getTime();
+  }
+
+  const parts = rawIso.split('T');
+  const dParts = (parts[0] || '').split('-').map(Number);
+  const tParts = (parts[1] || '00:00:00').split(':').map(Number);
+  const year = dParts[0] || new Date().getFullYear();
+  const month = (dParts[1] || 1) - 1;
+  const day = dParts[2] || 1;
+  const hour = tParts[0] || 0;
+  const minute = tParts[1] || 0;
+  const second = tParts[2] || 0;
+
+  const offset = typeof reminder.timezone_offset_minutes === 'number'
+    ? reminder.timezone_offset_minutes
+    : (userOffset !== undefined ? userOffset : 180);
+
+  return Date.UTC(year, month, day, hour, minute, second) + offset * 60000;
+}
 
 // ==========================================
 // AUTHENTICATION API (Mobile & Desktop Resilient)
@@ -451,9 +521,8 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     });
   }
 
-  const calculatedTs = timestamp_execucao
-    ? Number(timestamp_execucao)
-    : new Date(data_hora_execucao).getTime();
+  const clientOffset = getClientOffset(req, user_id);
+  userTimezoneOffsets.set(user_id, clientOffset);
 
   const reminderId = id || ('rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6));
 
@@ -462,9 +531,9 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     user_id,
     titulo: titulo.trim(),
     data_hora_execucao,
-    timestamp_execucao: !isNaN(calculatedTs) ? calculatedTs : Date.now(),
+    timestamp_execucao: timestamp_execucao ? Number(timestamp_execucao) : 0,
     timezone_offset_minutes:
-      timezone_offset_minutes !== undefined ? Number(timezone_offset_minutes) : undefined,
+      timezone_offset_minutes !== undefined ? Number(timezone_offset_minutes) : clientOffset,
     antecedencia_minutos: Number(antecedencia_minutos) || 0,
     status_tarefa: 'pendente',
     categoria: categoria || 'Geral',
@@ -472,6 +541,8 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     criado_em: req.body.criado_em || new Date().toISOString(),
     adiado_vezes: 0,
   };
+
+  newReminder.timestamp_execucao = resolveReminderExecutionTimestamp(newReminder, clientOffset);
 
   const list = userLembretes.get(user_id) || [];
   const existingIndex = list.findIndex((r) => r.id === reminderId);
@@ -519,24 +590,34 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
     timestamp_execucao,
   } = req.body;
 
+  const clientOffset = getClientOffset(req, userId);
+  userTimezoneOffsets.set(userId, clientOffset);
+
   if (status_tarefa) {
     item.status_tarefa = status_tarefa;
   }
 
   if (adiar_minutos) {
     const min = Number(adiar_minutos) || 10;
-    const currentExecTime = Number(item.timestamp_execucao) || new Date(item.data_hora_execucao).getTime();
+    const offset = typeof item.timezone_offset_minutes === 'number' ? item.timezone_offset_minutes : clientOffset;
+    const currentExecTime = resolveReminderExecutionTimestamp(item, offset);
     const baseTime = currentExecTime > Date.now() ? currentExecTime : Date.now();
     const newExecTime = baseTime + min * 60 * 1000;
-    const newExec = new Date(newExecTime);
+    
+    // Format local time strictly using the user's timezone offset
+    const localMs = newExecTime - offset * 60000;
+    const localDate = new Date(localMs);
     const pad = (n: number) => String(n).padStart(2, '0');
-    item.data_hora_execucao = `${newExec.getFullYear()}-${pad(newExec.getMonth() + 1)}-${pad(newExec.getDate())}T${pad(newExec.getHours())}:${pad(newExec.getMinutes())}:${pad(newExec.getSeconds())}`;
+    item.data_hora_execucao = `${localDate.getUTCFullYear()}-${pad(localDate.getUTCMonth() + 1)}-${pad(localDate.getUTCDate())}T${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}:${pad(localDate.getUTCSeconds())}`;
     item.timestamp_execucao = newExecTime;
+    item.timezone_offset_minutes = offset;
     item.status_tarefa = 'adiado';
     item.adiado_vezes = (item.adiado_vezes || 0) + 1;
   } else if (data_hora_execucao) {
     item.data_hora_execucao = data_hora_execucao;
-    item.timestamp_execucao = timestamp_execucao ? Number(timestamp_execucao) : new Date(data_hora_execucao).getTime();
+    item.timestamp_execucao = timestamp_execucao
+      ? Number(timestamp_execucao)
+      : resolveReminderExecutionTimestamp(item, clientOffset);
   }
 
   if (antecedencia_minutos !== undefined) {
@@ -774,6 +855,10 @@ app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Res
     });
   }
 
+  // Capture client timezone offset if provided
+  const clientOffset = getClientOffset(req, user_id);
+  userTimezoneOffsets.set(user_id, clientOffset);
+
   const existing = userPushSubscriptions.get(user_id) || [];
   // Deduplicate by endpoint to avoid duplicate notifications on same device
   const filtered = existing.filter((s) => s.endpoint !== subscription.endpoint);
@@ -781,7 +866,7 @@ app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Res
   userPushSubscriptions.set(user_id, filtered);
   saveCache();
 
-  console.log(`[WebPush] Inscrição salva para usuário ${user_id}. Dispositivos registrados: ${filtered.length}`);
+  console.log(`[WebPush] Inscrição salva para usuário ${user_id} (offset ${clientOffset}m). Dispositivos registrados: ${filtered.length}`);
   return res.json({
     status: 'sucesso',
     mensagem: 'Inscrição push salva com sucesso.',
@@ -846,11 +931,11 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
   });
 
   const pushOptions: webpush.RequestOptions = {
-    TTL: 0,
+    TTL: 86400,
     urgency: 'high',
     headers: {
       Urgency: 'high',
-      TTL: '0',
+      TTL: '86400',
     },
   };
 
@@ -891,9 +976,22 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
     return res.status(400).json({ status: 'erro', mensagem: 'user_id e lista de lembretes são obrigatórios.' });
   }
 
-  userLembretes.set(user_id, lembretes);
+  const clientOffset = getClientOffset(req, user_id);
+  userTimezoneOffsets.set(user_id, clientOffset);
+
+  // Ensure timestamps are consistently computed on every synced reminder
+  const processedReminders = (lembretes as Lembrete[]).map((r) => {
+    const ts = resolveReminderExecutionTimestamp(r, clientOffset);
+    return {
+      ...r,
+      timestamp_execucao: ts,
+      timezone_offset_minutes: r.timezone_offset_minutes ?? clientOffset,
+    };
+  });
+
+  userLembretes.set(user_id, processedReminders);
   saveCache();
-  return res.json({ status: 'sucesso', count: lembretes.length });
+  return res.json({ status: 'sucesso', count: processedReminders.length });
 });
 
 // Explicit API 404 boundary: prevents unmatched /api/* requests from falling through to Vite SPA index.html
@@ -920,8 +1018,6 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 // 6. SERVER-SIDE BACKGROUND ALARM RUNNER
 // Scans all registered users every 2 seconds.
 // Fires real Web Push notifications even if the browser is closed or phone is locked!
-const serverTriggeredReminders = new Set<string>();
-
 async function sendBackgroundPushNotification(
   reminder: Lembrete,
   userId: string,
@@ -941,10 +1037,12 @@ async function sendBackgroundPushNotification(
 
   console.log(`[Server Background Alarm] Disparando push (${isAntecedencia ? 'antecedência' : 'horário exato'}) para: "${reminder.titulo}" (${reminder.id})`);
 
+  const tag = `${reminder.id}_${isAntecedencia ? 'ant' : 'exec'}`;
+
   const payload = JSON.stringify({
     title,
     body,
-    tag: `${reminder.id}_${isAntecedencia ? 'ant' : 'exec'}`,
+    tag,
     reminderId: reminder.id,
     vibrate: [600, 200, 600, 200, 600, 200, 800],
     requireInteraction: true,
@@ -953,11 +1051,11 @@ async function sendBackgroundPushNotification(
   });
 
   const pushOptions: webpush.RequestOptions = {
-    TTL: 0,
+    TTL: 86400, // 24 hours persistence to reliably wake sleeping/locked mobile devices
     urgency: 'high',
     headers: {
       Urgency: 'high',
-      TTL: '0',
+      TTL: '86400',
     },
   };
 
@@ -979,69 +1077,72 @@ async function sendBackgroundPushNotification(
 }
 
 setInterval(async () => {
-  const now = Date.now();
+  try {
+    const now = Date.now();
 
-  for (const [userId, remindersList] of userLembretes.entries()) {
-    let subscriptions = userPushSubscriptions.get(userId) || [];
+    for (const [userId, remindersList] of userLembretes.entries()) {
+      let subscriptions = userPushSubscriptions.get(userId) || [];
 
-    // Resilient fallback: If no subscriptions found specifically under this userId,
-    // fallback to all registered device subscriptions so the user's mobile device NEVER misses an alarm!
-    if (subscriptions.length === 0 && userPushSubscriptions.size > 0) {
-      const allUniqueSubs = new Map<string, webpush.PushSubscription>();
-      for (const subs of userPushSubscriptions.values()) {
-        for (const s of subs) {
-          if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
-        }
-      }
-      subscriptions = Array.from(allUniqueSubs.values());
-    }
-
-    for (const reminder of remindersList) {
-      if (reminder.status_tarefa === 'concluído') continue;
-
-      // Resilient resolution of execution timestamp
-      let execTime = Number(reminder.timestamp_execucao);
-      if (!execTime || isNaN(execTime)) {
-        let rawIso = (reminder.data_hora_execucao || '').trim().replace(' ', 'T');
-        if (rawIso) {
-          if (/[Zz]|[+-]\d{2}(:?\d{2})?$/.test(rawIso)) {
-            execTime = new Date(rawIso).getTime();
-          } else if (typeof reminder.timezone_offset_minutes === 'number') {
-            const asUtc = new Date(rawIso + 'Z').getTime();
-            execTime = asUtc + reminder.timezone_offset_minutes * 60000;
-          } else {
-            execTime = new Date(rawIso).getTime();
+      // Resilient fallback: If no subscriptions found specifically under this userId,
+      // fallback to all registered device subscriptions so the user's mobile device NEVER misses an alarm!
+      if (subscriptions.length === 0 && userPushSubscriptions.size > 0) {
+        const allUniqueSubs = new Map<string, webpush.PushSubscription>();
+        for (const subs of userPushSubscriptions.values()) {
+          for (const s of subs) {
+            if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
           }
         }
+        subscriptions = Array.from(allUniqueSubs.values());
       }
 
-      if (!execTime || isNaN(execTime)) continue;
+      if (subscriptions.length === 0) continue;
 
-      const antMin = reminder.antecedencia_minutos || 0;
+      const userOffset = userTimezoneOffsets.get(userId) ?? 180;
 
-      // 1. Antecedência notification (if configured and due)
-      if (antMin > 0 && subscriptions.length > 0) {
-        const antecedenciaTime = execTime - antMin * 60 * 1000;
-        const diffAnt = now - antecedenciaTime;
-        const antKey = `ant_${reminder.id}_${antMin}_${reminder.data_hora_execucao}`;
+      for (const reminder of remindersList) {
+        if (reminder.status_tarefa === 'concluído') continue;
 
-        if (diffAnt >= 0 && diffAnt < 30 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
-          serverTriggeredReminders.add(antKey);
-          await sendBackgroundPushNotification(reminder, userId, subscriptions, true);
+        const execTime = resolveReminderExecutionTimestamp(reminder, userOffset);
+        if (!execTime || isNaN(execTime)) continue;
+
+        const antMin = Number(reminder.antecedencia_minutos) || 0;
+
+        // 1. Antecedência notification (if configured and due within last 5 minutes)
+        if (antMin > 0) {
+          const antecedenciaTime = execTime - antMin * 60 * 1000;
+          const diffAnt = now - antecedenciaTime;
+          const antKey = `ant_${reminder.id}_${antMin}_${reminder.data_hora_execucao}`;
+
+          if (diffAnt >= 0) {
+            if (diffAnt < 5 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+              serverTriggeredReminders.add(antKey);
+              saveCache();
+              await sendBackgroundPushNotification(reminder, userId, subscriptions, true);
+            } else if (diffAnt >= 5 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+              // Mark old historical antecedência as triggered to prevent stale notification
+              serverTriggeredReminders.add(antKey);
+            }
+          }
         }
-      }
 
-      // 2. Exact Execution Time alarm (when time arrives)
-      if (subscriptions.length > 0) {
+        // 2. Exact Execution Time alarm (when time arrives or within last 5 minutes)
         const diffExec = now - execTime;
         const execKey = `exec_${reminder.id}_${reminder.data_hora_execucao}`;
 
-        if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
-          serverTriggeredReminders.add(execKey);
-          await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
+        if (diffExec >= 0) {
+          if (diffExec < 5 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+            serverTriggeredReminders.add(execKey);
+            saveCache();
+            await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
+          } else if (diffExec >= 5 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+            // Mark old historical execution as triggered on boot/reconnect to prevent noise
+            serverTriggeredReminders.add(execKey);
+          }
         }
       }
     }
+  } catch (schedulerErr) {
+    console.error('[Server Background Runner] Erro no ciclo de verificação:', schedulerErr);
   }
 }, 2000);
 

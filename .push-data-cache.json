@@ -34,6 +34,11 @@
     "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": [],
     "test_verification_user": [],
     "usr_55502f40dc8b7c76": [],
-    "usr_68dd8a516780b021": []
+    "usr_68dd8a516780b021": [],
+    "test_user": []
+  },
+  "serverTriggeredReminders": [],
+  "userTimezoneOffsets": {
+    "test_user": 180
   }
 }

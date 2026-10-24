@@ -681,7 +681,20 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   )}T${pad(target.getHours())}:${pad(target.getMinutes())}:${pad(target.getSeconds())}`;
 
   if (!targetTimestamp) {
-    targetTimestamp = target.getTime();
+    if (typeof clientOffset === 'number' && clientOffset !== 0) {
+      targetTimestamp =
+        Date.UTC(
+          target.getFullYear(),
+          target.getMonth(),
+          target.getDate(),
+          target.getHours(),
+          target.getMinutes(),
+          target.getSeconds()
+        ) +
+        clientOffset * 60000;
+    } else {
+      targetTimestamp = target.getTime();
+    }
   }
 
   const formattedHour = `${pad(target.getHours())}:${pad(target.getMinutes())}`;

@@ -54,12 +54,26 @@ async function saveAlarmsToDB(userId, reminders) {
     existingMap.set(item.id, item);
   }
 
-  const transaction = db.transaction([STORE_ALARMS], 'readwrite');
-  const store = transaction.objectStore(STORE_ALARMS);
+  const incomingIds = new Set(reminders.map((r) => r.id));
+
+  // Prune any alarms previously stored for this user that are no longer in the incoming list
+  for (const [id, existingRec] of existingMap.entries()) {
+    if ((existingRec.user_id === userId || !userId) && !incomingIds.has(id)) {
+      store.delete(id);
+      try {
+        self.registration.getNotifications({ tag: `${id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+        self.registration.getNotifications({ tag: `${id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+      } catch {}
+    }
+  }
 
   for (const item of reminders) {
     if (item.status_tarefa === 'concluído') {
       store.delete(item.id);
+      try {
+        self.registration.getNotifications({ tag: `${item.id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+        self.registration.getNotifications({ tag: `${item.id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
+      } catch {}
       continue;
     }
 
@@ -188,7 +202,7 @@ async function scheduleNativeNotificationTrigger(item, type, triggerTimestamp) {
     ? `Aviso prévio (${item.antecedencia_minutos} min antes) para: ${item.titulo}`
     : `Horário do compromisso alcançado: ${item.titulo}!`;
 
-  const tag = `alarm_${type}_${item.id}`;
+  const tag = `${item.id}_${type}`;
 
   try {
     const trigger = new self.TimestampTrigger(triggerTimestamp);
@@ -275,9 +289,14 @@ async function fireAlarmNotification(alarm, type) {
     ? `Aviso de antecedência (${alarm.antecedencia_minutos} min) para: ${alarm.titulo}`
     : `Horário do compromisso alcançado: ${alarm.titulo}!`;
 
-  const tag = `alarm_${type}_${alarm.id}`;
+  const tag = `${alarm.id}_${type}`;
 
   try {
+    const existingNotifs = await self.registration.getNotifications({ tag });
+    if (existingNotifs && existingNotifs.length > 0) {
+      return;
+    }
+
     await self.registration.showNotification(title, {
       body: body,
       icon: '/icon-192.png',
@@ -431,18 +450,24 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  const reminderId = data.reminderId;
+  const isAntecedencia = !!data.isAntecedencia;
+  const triggerType = isAntecedencia ? 'ant' : 'exec';
+  const tag = data.tag || (reminderId ? `${reminderId}_${triggerType}` : `alarm_${Date.now()}`);
+
   const notificationOptions = {
     body: data.body,
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    tag: data.tag || data.reminderId || 'alarm',
+    tag: tag,
     renotify: true,
     requireInteraction: true,
     silent: false,
     vibrate: [600, 200, 600, 200, 600, 200, 800],
     data: {
-      url: data.url || (data.reminderId ? `/?alarm_reminder_id=${data.reminderId}` : '/'),
-      reminderId: data.reminderId,
+      url: data.url || (reminderId ? `/?alarm_reminder_id=${reminderId}` : '/'),
+      reminderId: reminderId,
+      triggerType: triggerType,
     },
     actions: [
       { action: 'open', title: 'Ver Lembrete' },
@@ -456,15 +481,18 @@ self.addEventListener('push', (event) => {
       // 1. Exibir notificação push nativa com vibração e persistência
       await self.registration.showNotification(data.title, notificationOptions);
 
-      // 2. Verificar o banco IndexedDB local de alarmes
-      await verifyAndTriggerDueAlarms();
+      // 2. Marcar no IndexedDB local para evitar duplicação pelo agendador local
+      if (reminderId) {
+        await markAlarmTriggeredInDB(reminderId, triggerType);
+      }
 
       // 3. Avisar clientes abertos
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for (const client of clientList) {
         client.postMessage({
           type: 'TRIGGER_ALARM',
-          reminderId: data.reminderId,
+          reminderId: reminderId,
+          triggerType: triggerType,
         });
       }
     })()
