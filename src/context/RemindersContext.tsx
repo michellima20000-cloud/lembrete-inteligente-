@@ -121,9 +121,9 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!currentUser?.id) return;
     setIsLoading(true);
 
-    // First load from local storage cache for instant UI rendering
+    // Only hydrate from local storage if in-memory state is empty
     const localItems = loadLocalPartition(currentUser.id);
-    setReminders(localItems);
+    setReminders((current) => (current.length === 0 && localItems.length > 0 ? localItems : current));
 
     try {
       const res = await fetch(`/api/reminders?user_id=${encodeURIComponent(currentUser.id)}`, {
@@ -134,19 +134,23 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const data = await res.json();
         if (data.lembretes && Array.isArray(data.lembretes)) {
           const verified = data.lembretes.filter((item: Lembrete) => item.user_id === currentUser.id);
-          const currentLocal: Lembrete[] = loadLocalPartition(currentUser.id);
-          const map = new Map<string, Lembrete>();
-          // Preserve local items first
-          currentLocal.forEach((i: Lembrete) => map.set(i.id, i));
-          // Overlay verified server items
-          verified.forEach((i: Lembrete) => map.set(i.id, i));
-          const merged = Array.from(map.values());
-          merged.sort((a: Lembrete, b: Lembrete) =>
-            new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
-          );
-          setReminders(merged);
-          saveLocalPartition(currentUser.id, merged);
-          pushManager.syncReminders(currentUser.id, merged);
+          setReminders((prev) => {
+            const currentLocal: Lembrete[] = loadLocalPartition(currentUser.id);
+            const map = new Map<string, Lembrete>();
+            // 1. Preserve current React state first (so freshly added items are never dropped)
+            prev.forEach((i: Lembrete) => map.set(i.id, i));
+            // 2. Add local storage items
+            currentLocal.forEach((i: Lembrete) => map.set(i.id, i));
+            // 3. Overlay verified server items
+            verified.forEach((i: Lembrete) => map.set(i.id, i));
+            const merged = Array.from(map.values()).filter((i: Lembrete) => i.user_id === currentUser.id);
+            merged.sort((a: Lembrete, b: Lembrete) =>
+              new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
+            );
+            saveLocalPartition(currentUser.id, merged);
+            pushManager.syncReminders(currentUser.id, merged);
+            return merged;
+          });
         }
       }
     } catch (e) {
@@ -286,7 +290,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     fetchReminders();
 
     // Only attach Firestore realtime listener if user is authenticated with Firebase Auth
-    if (!firebaseUser || !auth.currentUser || auth.currentUser.uid !== currentUser.id) {
+    if (!firebaseUser || !auth.currentUser || auth.currentUser.uid !== currentUser.id || auth.currentUser.isAnonymous) {
       setIsFirestoreSyncing(false);
       return;
     }
@@ -317,15 +321,22 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
           }
 
-          const allItems = [...fbItems, ...missingInFirestore];
-          const verified = allItems.filter((i) => i.user_id === currentUser.id);
-          verified.sort(
-            (a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
-          );
-
-          setReminders(verified);
-          saveLocalPartition(currentUser.id, verified);
-          pushManager.syncReminders(currentUser.id, verified);
+          setReminders((prev) => {
+            const map = new Map<string, Lembrete>();
+            // Keep currently rendered optimistic items
+            prev.forEach((i) => map.set(i.id, i));
+            // Keep local items
+            localItems.forEach((i) => map.set(i.id, i));
+            // Overlay Firestore items
+            fbItems.forEach((i) => map.set(i.id, i));
+            const verified = Array.from(map.values()).filter((i) => i.user_id === currentUser.id);
+            verified.sort(
+              (a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime()
+            );
+            saveLocalPartition(currentUser.id, verified);
+            pushManager.syncReminders(currentUser.id, verified);
+            return verified;
+          });
         },
         (error) => {
           handleFirestoreError(error, OperationType.GET, remindersPath);
@@ -536,7 +547,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Helper to sync single item to Firestore
   const syncItemToFirestore = async (item: Lembrete) => {
     if (!currentUser?.id) return;
-    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) return;
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id || auth.currentUser.isAnonymous) return;
     const path = `users/${currentUser.id}/reminders/${item.id}`;
     try {
       await setDoc(doc(db, 'users', currentUser.id, 'reminders', item.id), item);
@@ -548,7 +559,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Helper to delete item from Firestore
   const deleteItemFromFirestore = async (id: string) => {
     if (!currentUser?.id) return;
-    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id) return;
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.id || auth.currentUser.isAnonymous) return;
     const path = `users/${currentUser.id}/reminders/${id}`;
     try {
       await deleteDoc(doc(db, 'users', currentUser.id, 'reminders', id));
@@ -783,9 +794,17 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
           updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
           saveLocalPartition(effectiveUserId, updated);
+          if (currentUser?.id && currentUser.id !== effectiveUserId) {
+            saveLocalPartition(currentUser.id, updated);
+          }
           pushManager.syncReminders(effectiveUserId, updated);
           return updated;
         });
+
+        // Trigger notification permission dialog on user gesture if not yet granted
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          requestNotificationPermission().catch(() => {});
+        }
       }
 
       await fetchReminders().catch(() => {});
@@ -834,13 +853,19 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     syncItemToFirestore(fullItem);
     soundAlert.playSuccess();
 
-    // 3. Notify backend API if available
+    // 3. Trigger notification permission dialog on user gesture if not yet granted
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      requestNotificationPermission().catch(() => {});
+    }
+
+    // 4. Notify backend API and refresh safely without wiping in-memory state
     try {
       await fetch('/api/reminders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullItem),
       });
+      await fetchReminders().catch(() => {});
     } catch (e) {
       // Backend not running (e.g. static hosting on Vercel)
     }

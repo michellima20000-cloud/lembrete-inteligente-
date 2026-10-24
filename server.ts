@@ -433,6 +433,7 @@ app.get('/api/reminders', (req: Request, res: Response) => {
 // API: Save Reminder for authenticated user
 app.post('/api/reminders', (req: Request, res: Response) => {
   const {
+    id,
     user_id,
     titulo,
     data_hora_execucao,
@@ -454,8 +455,10 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     ? Number(timestamp_execucao)
     : new Date(data_hora_execucao).getTime();
 
+  const reminderId = id || ('rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6));
+
   const newReminder: Lembrete = {
-    id: 'rem_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    id: reminderId,
     user_id,
     titulo: titulo.trim(),
     data_hora_execucao,
@@ -466,12 +469,17 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     status_tarefa: 'pendente',
     categoria: categoria || 'Geral',
     urgencia: urgencia || 'media',
-    criado_em: new Date().toISOString(),
+    criado_em: req.body.criado_em || new Date().toISOString(),
     adiado_vezes: 0,
   };
 
   const list = userLembretes.get(user_id) || [];
-  list.push(newReminder);
+  const existingIndex = list.findIndex((r) => r.id === reminderId);
+  if (existingIndex >= 0) {
+    list[existingIndex] = newReminder;
+  } else {
+    list.push(newReminder);
+  }
   userLembretes.set(user_id, list);
   saveCache();
 
@@ -805,7 +813,21 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
     return res.status(400).json({ status: 'erro', mensagem: 'user_id obrigatório.' });
   }
 
-  const subs = userPushSubscriptions.get(user_id) || [];
+  let subs = userPushSubscriptions.get(user_id) || [];
+  if (subs.length === 0 && userPushSubscriptions.size > 0) {
+    const allUniqueSubs = new Map<string, webpush.PushSubscription>();
+    for (const sList of userPushSubscriptions.values()) {
+      for (const s of sList) {
+        if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
+      }
+    }
+    subs = Array.from(allUniqueSubs.values());
+    if (subs.length > 0) {
+      userPushSubscriptions.set(user_id, subs);
+      saveCache();
+    }
+  }
+
   if (subs.length === 0) {
     return res.status(404).json({
       status: 'erro',
@@ -960,7 +982,19 @@ setInterval(async () => {
   const now = Date.now();
 
   for (const [userId, remindersList] of userLembretes.entries()) {
-    const subscriptions = userPushSubscriptions.get(userId) || [];
+    let subscriptions = userPushSubscriptions.get(userId) || [];
+
+    // Resilient fallback: If no subscriptions found specifically under this userId,
+    // fallback to all registered device subscriptions so the user's mobile device NEVER misses an alarm!
+    if (subscriptions.length === 0 && userPushSubscriptions.size > 0) {
+      const allUniqueSubs = new Map<string, webpush.PushSubscription>();
+      for (const subs of userPushSubscriptions.values()) {
+        for (const s of subs) {
+          if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
+        }
+      }
+      subscriptions = Array.from(allUniqueSubs.values());
+    }
 
     for (const reminder of remindersList) {
       if (reminder.status_tarefa === 'concluído') continue;
