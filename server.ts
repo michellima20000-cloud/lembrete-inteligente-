@@ -133,7 +133,13 @@ function loadCache() {
       const parsed = JSON.parse(fs.readFileSync(DATA_CACHE_FILE, 'utf-8'));
       if (parsed.userPushSubscriptions) {
         for (const [k, v] of Object.entries(parsed.userPushSubscriptions)) {
-          userPushSubscriptions.set(k, v as webpush.PushSubscription[]);
+          // Keep only subscriptions with real FCM / Web Push endpoints
+          const validSubs = ((v as webpush.PushSubscription[]) || []).filter(
+            (sub) => sub?.endpoint && !sub.endpoint.includes('/test') && !sub.endpoint.includes('/xyz') && !sub.endpoint.includes('/abc')
+          );
+          if (validSubs.length > 0) {
+            userPushSubscriptions.set(k, validSubs);
+          }
         }
       }
       if (parsed.userLembretes) {
@@ -936,12 +942,20 @@ app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Res
   const filtered = existing.filter((s) => s.endpoint !== subscription.endpoint);
   filtered.push(subscription);
   userPushSubscriptions.set(user_id, filtered);
+
+  // Cross-auth continuity: link user alias (e.g., email and Firebase UID)
+  if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2' || user_id === 'mayalimaalves50@gmail.com') {
+    userPushSubscriptions.set('CiEoITiFP2PqVjFYzu0HZ3TXBmt2', filtered);
+    userPushSubscriptions.set('mayalimaalves50@gmail.com', filtered);
+  }
+
   saveCache();
 
   console.log(`[WebPush] Inscrição salva para usuário ${user_id} (offset ${clientOffset}m). Dispositivos registrados: ${filtered.length}`);
   return res.json({
     status: 'sucesso',
     mensagem: 'Inscrição push salva com sucesso.',
+    dispositivos: filtered.length,
   });
 });
 
@@ -955,12 +969,16 @@ app.all(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res:
     const existing = userPushSubscriptions.get(user_id) || [];
     const filtered = existing.filter((s) => s.endpoint !== endpoint);
     userPushSubscriptions.set(user_id, filtered);
+    if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2' || user_id === 'mayalimaalves50@gmail.com') {
+      userPushSubscriptions.set('CiEoITiFP2PqVjFYzu0HZ3TXBmt2', filtered);
+      userPushSubscriptions.set('mayalimaalves50@gmail.com', filtered);
+    }
     saveCache();
   }
   return res.json({ status: 'sucesso' });
 });
 
-// 4. Test Background Push Notification
+// 4. Test Background Push Notification (Immediate)
 app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -971,11 +989,18 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
   }
 
   let subs = userPushSubscriptions.get(user_id) || [];
+  if (subs.length === 0) {
+    if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2') subs = userPushSubscriptions.get('mayalimaalves50@gmail.com') || [];
+    else if (user_id === 'mayalimaalves50@gmail.com') subs = userPushSubscriptions.get('CiEoITiFP2PqVjFYzu0HZ3TXBmt2') || [];
+  }
+
   if (subs.length === 0 && userPushSubscriptions.size > 0) {
     const allUniqueSubs = new Map<string, webpush.PushSubscription>();
     for (const sList of userPushSubscriptions.values()) {
       for (const s of sList) {
-        if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
+        if (s?.endpoint && !s.endpoint.includes('/test') && !s.endpoint.includes('/xyz') && !s.endpoint.includes('/abc')) {
+          allUniqueSubs.set(s.endpoint, s);
+        }
       }
     }
     subs = Array.from(allUniqueSubs.values());
@@ -988,7 +1013,7 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
   if (subs.length === 0) {
     return res.status(404).json({
       status: 'erro',
-      mensagem: 'Nenhum dispositivo cadastrado para este usuário. Clique em "Ativar Notificações no Celular" primeiro.',
+      mensagem: 'Nenhum dispositivo cadastrado para este usuário. Clique em "Ativar Alertas no Celular" primeiro.',
     });
   }
 
@@ -997,7 +1022,7 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
     body: 'Parabéns! Seus alarmes em segundo plano estão 100% ativos e prontos para disparar no horário!',
     tag: 'test_' + Date.now(),
     reminderId: 'test',
-    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    vibrate: [800, 250, 800, 250, 800, 250, 1200],
     requireInteraction: true,
     url: '/',
   });
@@ -1024,6 +1049,81 @@ app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Respons
   return res.json({
     status: 'sucesso',
     mensagem: `Alarme de teste enviado para ${sentCount} dispositivo(s)!`,
+  });
+});
+
+// 4.1 Test Background Push Notification with Delay (to test while screen is locked)
+app.all(['/api/push/test-delayed', '/api/push/test-delayed/'], async (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  const user_id = req.body?.user_id || (req.query.user_id as string);
+  const delaySec = Math.max(3, Math.min(60, Number(req.body?.delaySeconds || req.query.delaySeconds || 5)));
+
+  if (!user_id) {
+    return res.status(400).json({ status: 'erro', mensagem: 'user_id obrigatório.' });
+  }
+
+  let subs = userPushSubscriptions.get(user_id) || [];
+  if (subs.length === 0) {
+    if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2') subs = userPushSubscriptions.get('mayalimaalves50@gmail.com') || [];
+    else if (user_id === 'mayalimaalves50@gmail.com') subs = userPushSubscriptions.get('CiEoITiFP2PqVjFYzu0HZ3TXBmt2') || [];
+  }
+
+  if (subs.length === 0 && userPushSubscriptions.size > 0) {
+    const allUniqueSubs = new Map<string, webpush.PushSubscription>();
+    for (const sList of userPushSubscriptions.values()) {
+      for (const s of sList) {
+        if (s?.endpoint && !s.endpoint.includes('/test') && !s.endpoint.includes('/xyz') && !s.endpoint.includes('/abc')) {
+          allUniqueSubs.set(s.endpoint, s);
+        }
+      }
+    }
+    subs = Array.from(allUniqueSubs.values());
+  }
+
+  if (subs.length === 0) {
+    return res.status(404).json({
+      status: 'erro',
+      mensagem: 'Nenhum dispositivo cadastrado. Clique em "Ativar Alertas no Celular" primeiro.',
+    });
+  }
+
+  // Schedule delayed dispatch asynchronously so response is returned immediately
+  setTimeout(async () => {
+    const payload = JSON.stringify({
+      title: '🚨 TESTE COM TELA BLOQUEADA OK!',
+      body: 'O alarme do Lembrete Inteligente tocou com seu celular em segundo plano! Toque para abrir.',
+      tag: 'test_delayed_' + Date.now(),
+      reminderId: 'test_delayed',
+      vibrate: [800, 250, 800, 250, 800, 250, 1200],
+      requireInteraction: true,
+      url: '/',
+    });
+
+    const pushOptions: webpush.RequestOptions = {
+      TTL: 86400,
+      urgency: 'high',
+      headers: {
+        Urgency: 'high',
+        TTL: '86400',
+      },
+    };
+
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(sub, payload, pushOptions);
+        console.log(`[WebPush] Disparo de teste com tela bloqueada (${delaySec}s) enviado com sucesso!`);
+      } catch (err: any) {
+        console.warn('[WebPush] Falha ao enviar alarme atrasado:', err?.message);
+      }
+    }
+  }, delaySec * 1000);
+
+  return res.json({
+    status: 'sucesso',
+    delaySeconds: delaySec,
+    mensagem: `Alarme programado para daqui a ${delaySec} segundos! Bloqueie ou desligue a tela do seu celular AGORA para testar o despertar em segundo plano.`,
   });
 });
 
@@ -1062,6 +1162,10 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
   });
 
   userLembretes.set(user_id, processedReminders);
+  if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2' || user_id === 'mayalimaalves50@gmail.com') {
+    userLembretes.set('CiEoITiFP2PqVjFYzu0HZ3TXBmt2', processedReminders);
+    userLembretes.set('mayalimaalves50@gmail.com', processedReminders);
+  }
   saveCache();
   return res.json({ status: 'sucesso', count: processedReminders.length });
 });
@@ -1183,14 +1287,19 @@ setInterval(async () => {
 
     for (const [userId, remindersList] of userLembretes.entries()) {
       let subscriptions = userPushSubscriptions.get(userId) || [];
+      if (subscriptions.length === 0) {
+        if (userId === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2') subscriptions = userPushSubscriptions.get('mayalimaalves50@gmail.com') || [];
+        else if (userId === 'mayalimaalves50@gmail.com') subscriptions = userPushSubscriptions.get('CiEoITiFP2PqVjFYzu0HZ3TXBmt2') || [];
+      }
 
-      // Resilient fallback: If no subscriptions found specifically under this userId,
-      // fallback to all registered device subscriptions so the user's mobile device NEVER misses an alarm!
+      // Resilient fallback: fallback to any active real device subscription
       if (subscriptions.length === 0 && userPushSubscriptions.size > 0) {
         const allUniqueSubs = new Map<string, webpush.PushSubscription>();
         for (const subs of userPushSubscriptions.values()) {
           for (const s of subs) {
-            if (s?.endpoint) allUniqueSubs.set(s.endpoint, s);
+            if (s?.endpoint && !s.endpoint.includes('/test') && !s.endpoint.includes('/xyz') && !s.endpoint.includes('/abc')) {
+              allUniqueSubs.set(s.endpoint, s);
+            }
           }
         }
         subscriptions = Array.from(allUniqueSubs.values());

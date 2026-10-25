@@ -35,6 +35,7 @@ interface RemindersContextType {
   isPushSubscribed: boolean;
   subscribePush: () => Promise<{ success: boolean; message: string }>;
   testPushNotification: () => Promise<{ success: boolean; message: string }>;
+  testPushDelayed: (seconds?: number) => Promise<{ success: boolean; message: string }>;
   unsubscribePush: () => Promise<boolean>;
   soundEnabled: boolean;
   toggleSound: () => void;
@@ -288,6 +289,13 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return await pushManager.testPush(currentUser.id);
   };
 
+  const testPushDelayed = async (seconds = 5) => {
+    if (!currentUser?.id) {
+      return { success: false, message: 'Usuário não autenticado.' };
+    }
+    return await pushManager.testPushDelayed(currentUser.id, seconds);
+  };
+
   const unsubscribePush = async () => {
     if (!currentUser?.id) return false;
     const ok = await pushManager.unsubscribeFromPush(currentUser.id);
@@ -423,7 +431,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         renotify: true,
         requireInteraction: true, // Mantém o alerta na tela fora do navegador até interação
         silent: false,
-        vibrate: [600, 200, 600, 200, 600, 200, 800],
+        vibrate: [800, 250, 800, 250, 800, 250, 1200],
         data: {
           id: item.id,
           reminderId: item.id,
@@ -431,9 +439,9 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           triggerType: isAntecedencia ? 'ant' : 'exec',
         },
         actions: [
-          { action: 'open', title: 'Ver Lembrete' },
-          { action: 'snooze', title: 'Adiar 10m' },
-          { action: 'complete', title: 'Concluir' },
+          { action: 'open', title: '🔔 Abrir Alarme' },
+          { action: 'snooze', title: '⏰ Adiar 10m' },
+          { action: 'complete', title: '✅ Concluir' },
         ],
       } as any);
     } catch (e) {
@@ -936,6 +944,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isPushSubscribed,
         subscribePush,
         testPushNotification,
+        testPushDelayed,
         unsubscribePush,
         soundEnabled,
         toggleSound,

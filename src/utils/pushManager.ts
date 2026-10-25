@@ -505,6 +505,27 @@ class PushManagerService {
     }
   }
 
+  public async testPushDelayed(userId: string, delaySeconds = 5): Promise<{ success: boolean; message: string }> {
+    try {
+      let res = await safeFetchJson<{ status: string; mensagem?: string }>('/api/push/test-delayed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, delaySeconds }),
+      });
+      if (!res.ok) {
+        res = await safeFetchJson<{ status: string; mensagem?: string }>(
+          `/api/push/test-delayed?user_id=${encodeURIComponent(userId)}&delaySeconds=${delaySeconds}`
+        );
+      }
+      if (!res.ok) {
+        return { success: false, message: res.error || 'Falha ao agendar teste.' };
+      }
+      return { success: true, message: res.data?.mensagem || `Alarme agendado para ${delaySeconds}s! Bloqueie a tela agora.` };
+    } catch (e: any) {
+      return { success: false, message: e?.message || 'Erro de conexão ao agendar teste com tela bloqueada.' };
+    }
+  }
+
   public async syncReminders(userId: string, lembretes: any[]): Promise<void> {
     // 1. Post to active Service Worker for IndexedDB persistence and native OS NotificationTriggers
     try {

@@ -462,16 +462,16 @@ async function fireAlarmNotification(alarm, type) {
       requireInteraction: true,
       renotify: true,
       silent: false,
-      vibrate: [600, 200, 600, 200, 600, 200, 800],
+      vibrate: [800, 250, 800, 250, 800, 250, 1200],
       data: {
         reminderId: alarm.id,
         triggerType: type,
         url: `/?alarm_reminder_id=${alarm.id}`,
       },
       actions: [
-        { action: 'open', title: 'Ver Lembrete' },
-        { action: 'snooze', title: 'Adiar 10m' },
-        { action: 'complete', title: 'Concluir' },
+        { action: 'open', title: '🔔 Abrir Alarme' },
+        { action: 'snooze', title: '⏰ Adiar 10m' },
+        { action: 'complete', title: '✅ Concluir' },
       ],
     });
   } catch (err) {
@@ -641,16 +641,16 @@ self.addEventListener('push', (event) => {
     renotify: true,
     requireInteraction: true,
     silent: false,
-    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    vibrate: [800, 250, 800, 250, 800, 250, 1200],
     data: {
       url: data.url || (reminderId ? `/?alarm_reminder_id=${reminderId}` : '/'),
       reminderId: reminderId,
       triggerType: triggerType,
     },
     actions: [
-      { action: 'open', title: 'Ver Lembrete' },
-      { action: 'snooze', title: 'Adiar 10m' },
-      { action: 'complete', title: 'Concluir' },
+      { action: 'open', title: '🔔 Abrir Alarme' },
+      { action: 'snooze', title: '⏰ Adiar 10m' },
+      { action: 'complete', title: '✅ Concluir' },
     ],
   };
 
