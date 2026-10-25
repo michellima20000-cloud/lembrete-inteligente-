@@ -421,6 +421,21 @@ self.addEventListener('message', (event) => {
     );
   } else if (type === 'CHECK_ALARMS' || type === 'TICK' || type === 'PING') {
     event.waitUntil(verifyAndTriggerDueAlarms());
+  } else if (type === 'SHOW_NOTIFICATION') {
+    const { title, options } = event.data;
+    if (title && self.registration && typeof self.registration.showNotification === 'function') {
+      event.waitUntil(
+        self.registration.showNotification(title, {
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          requireInteraction: true,
+          renotify: true,
+          silent: false,
+          vibrate: [600, 200, 600, 200, 600, 200, 800],
+          ...options,
+        })
+      );
+    }
   } else if (type === 'TEST_ALARM') {
     event.waitUntil(
       self.registration.showNotification('⏰ Teste de Alarme', {

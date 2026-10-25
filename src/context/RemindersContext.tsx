@@ -276,6 +276,15 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!currentUser?.id) {
       return { success: false, message: 'Usuário não autenticado.' };
     }
+    // Dispara teste imediato local via Notifications API (serviceWorker.showNotification)
+    await pushManager.showSystemNotification('⏰ Teste de Notificação de Sistema', {
+      body: 'O serviço de notificações do sistema operacional está 100% ativo fora do navegador!',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: 'test_local_' + Date.now(),
+      requireInteraction: true,
+      vibrate: [600, 200, 600, 200, 600, 200, 800],
+    });
     return await pushManager.testPush(currentUser.id);
   };
 
@@ -369,54 +378,66 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [currentUser?.id, firebaseUser, fetchReminders, loadLocalPartition, saveLocalPartition]);
 
-  // Send Background Notification via Service Worker (Android Chrome / PWA) or Notification API
+  // Disparar aviso de sistema via Notifications API (serviceWorker.showNotification)
+  // Garantindo que o alerta apareça fora do navegador, na área de notificações do sistema operacional.
   const triggerPushNotification = async (item: Lembrete, isAntecedencia = false) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
-    if (Notification.permission !== 'granted') return;
+
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      try {
+        permission = await Notification.requestPermission();
+        setNotificationPermission(permission);
+      } catch {
+        permission = Notification.permission;
+      }
+    }
+    if (permission !== 'granted') return;
+
+    let timeFormatted = '';
+    try {
+      if (item.data_hora_execucao) {
+        timeFormatted = new Date(item.data_hora_execucao).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      }
+    } catch {}
 
     const title = isAntecedencia
       ? `⏰ AVISO PRÉVIO: ${item.titulo}`
       : `⏰ ALARME: ${item.titulo}`;
     const body = isAntecedencia
-      ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso!`
-      : `Horário do compromisso alcançado: ${item.titulo}!`;
+      ? `Aviso de antecedência (${item.antecedencia_minutos} min antes) para seu compromisso${timeFormatted ? ` das ${timeFormatted}` : ''}!`
+      : `Horário do compromisso alcançado${timeFormatted ? ` (${timeFormatted})` : ''}: ${item.titulo}! Toque para ver ou adiar.`;
 
-    // 1. Android Chrome / PWA Service Worker notification (Supports vibration & background wake)
-    if ('serviceWorker' in navigator) {
-      try {
-        const reg = await navigator.serviceWorker.ready;
-        if (reg && typeof reg.showNotification === 'function') {
-          await reg.showNotification(title, {
-            body,
-            icon: '/icon-192.png',
-            badge: '/icon-192.png',
-            tag: `${item.id}_${isAntecedencia ? 'ant' : 'exec'}`,
-            renotify: true,
-            requireInteraction: true,
-            vibrate: [600, 200, 600, 200, 600, 200, 800],
-            data: { id: item.id },
-          } as any);
-          return;
-        }
-      } catch (swErr) {
-        console.warn('Service worker showNotification notice:', swErr);
-      }
-    }
+    const tag = `${item.id}_${isAntecedencia ? 'ant' : 'exec'}`;
 
-    // 2. Desktop & iOS Safari fallback
+    // Disparar via serviceWorker.showNotification através do pushManager
     try {
-      const notif = new Notification(title, {
+      await pushManager.showSystemNotification(title, {
         body,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        tag: `${item.id}_${isAntecedencia ? 'ant' : 'exec'}`,
-        requireInteraction: true,
+        tag,
+        renotify: true,
+        requireInteraction: true, // Mantém o alerta na tela fora do navegador até interação
+        silent: false,
+        vibrate: [600, 200, 600, 200, 600, 200, 800],
+        data: {
+          id: item.id,
+          reminderId: item.id,
+          url: `/?alarm_reminder_id=${item.id}`,
+          triggerType: isAntecedencia ? 'ant' : 'exec',
+        },
+        actions: [
+          { action: 'open', title: 'Ver Lembrete' },
+          { action: 'snooze', title: 'Adiar 10m' },
+          { action: 'complete', title: 'Concluir' },
+        ],
       } as any);
-      notif.onclick = () => {
-        window.focus();
-      };
     } catch (e) {
-      console.warn('Fallback Notification constructor failed:', e);
+      console.warn('[RemindersContext] Falha ao disparar notificação de sistema:', e);
     }
   };
 

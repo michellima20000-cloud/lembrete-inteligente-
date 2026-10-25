@@ -95,6 +95,15 @@ async function safeFetchJson<T = any>(
 type AlarmTriggerCallback = (reminderId?: string) => void;
 type SnoozeCallback = (reminderId?: string) => void;
 
+export interface SystemNotificationOptions extends NotificationOptions {
+  vibrate?: number | number[];
+  renotify?: boolean;
+  requireInteraction?: boolean;
+  actions?: Array<{ action: string; title: string; icon?: string }>;
+  data?: any;
+  silent?: boolean;
+}
+
 class PushManagerService {
   private registration: ServiceWorkerRegistration | null = null;
   private alarmListeners: Set<AlarmTriggerCallback> = new Set();
@@ -184,6 +193,96 @@ class PushManagerService {
     } catch (e) {
       console.warn('[PushManager] Erro ao consultar inscrição existente:', e);
       return null;
+    }
+  }
+
+  /**
+   * Dispara um aviso de sistema via Notifications API utilizando serviceWorker.showNotification
+   * Garantindo que o alerta apareça fora do navegador (na área de notificações nativa do SO).
+   */
+  public async showSystemNotification(
+    title: string,
+    options: SystemNotificationOptions = {}
+  ): Promise<boolean> {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return false;
+    }
+
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      try {
+        permission = await Notification.requestPermission();
+      } catch {
+        permission = Notification.permission;
+      }
+    }
+    if (permission !== 'granted') {
+      return false;
+    }
+
+    const mergedOptions: SystemNotificationOptions = {
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      requireInteraction: true, // Mantém o alerta na tela fora do navegador até interação
+      renotify: true,
+      silent: false,
+      vibrate: [600, 200, 600, 200, 600, 200, 800],
+      ...options,
+    };
+
+    // 1. Tentar prioritariamente via Service Worker Registration (serviceWorker.showNotification)
+    if ('serviceWorker' in navigator) {
+      try {
+        let reg: ServiceWorkerRegistration | null = this.registration;
+        if (!reg) {
+          try {
+            reg = (await navigator.serviceWorker.getRegistration()) || null;
+          } catch {}
+        }
+        if (!reg) {
+          try {
+            const readyPromise = navigator.serviceWorker.ready;
+            const timeoutPromise = new Promise<ServiceWorkerRegistration | null>((r) =>
+              setTimeout(() => r(null), 1500)
+            );
+            reg = (await Promise.race([readyPromise, timeoutPromise])) || null;
+          } catch {}
+        }
+
+        if (reg && typeof reg.showNotification === 'function') {
+          await reg.showNotification(title, mergedOptions as any);
+          return true;
+        }
+      } catch (swErr) {
+        console.warn('[PushManager] Aviso ao chamar serviceWorker.showNotification:', swErr);
+      }
+
+      // Tentar delegar mensagem direta ao Service Worker Controller
+      try {
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'SHOW_NOTIFICATION',
+            title,
+            options: mergedOptions,
+          });
+          return true;
+        }
+      } catch {}
+    }
+
+    // 2. Fallback via construtor padrão da Notifications API fora do Service Worker
+    try {
+      const fallbackNotif = new Notification(title, mergedOptions as any);
+      fallbackNotif.onclick = () => {
+        try {
+          window.focus();
+        } catch {}
+        fallbackNotif.close();
+      };
+      return true;
+    } catch (fallbackError) {
+      console.warn('[PushManager] Fallback da Notifications API falhou:', fallbackError);
+      return false;
     }
   }
 
