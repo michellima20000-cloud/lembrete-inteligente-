@@ -35,7 +35,7 @@ app.use((req: Request, res: Response, next) => {
 // Force JSON Content-Type and disable caching on all /api routes
 app.use('/api', (req: Request, res: Response, next) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   next();
 });
 
@@ -83,7 +83,7 @@ export interface Lembrete {
   timestamp_execucao?: number; // Absolute UTC Epoch Milliseconds
   timezone_offset_minutes?: number; // Timezone offset in minutes
   antecedencia_minutos: number; // 0, 5, 10, 15, 30
-  status_tarefa: 'pendente' | 'concluído' | 'adiado';
+  status_tarefa: 'pendente' | 'concluído' | 'concluido' | 'adiado';
   categoria?: string;
   urgencia?: 'baixa' | 'media' | 'alta';
   recorrencia?: 'nenhuma' | 'diaria' | 'semanal';
@@ -1182,7 +1182,7 @@ app.all(['/api/ping', '/api/ping/'], (req: Request, res: Response) => {
   }
 
   const userItems = userId ? (userLembretes.get(userId) || []) : [];
-  const pendingCount = userItems.filter((i) => i.status_tarefa !== 'concluído').length;
+  const pendingCount = userItems.filter((i) => i.status_tarefa !== 'concluído' && i.status_tarefa !== 'concluido').length;
   const subsCount = userId ? (userPushSubscriptions.get(userId) || []).length : 0;
 
   return res.json({
@@ -1241,24 +1241,31 @@ async function sendBackgroundPushNotification(
   console.log(`[Server Background Alarm] Disparando push (${isAntecedencia ? 'antecedência' : 'horário exato'}) para: "${reminder.titulo}" (${reminder.id})`);
 
   const tag = `${reminder.id}_${isAntecedencia ? 'ant' : 'exec'}`;
+  const safeTopic = reminder.id ? `rem_${reminder.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32)}` : undefined;
 
   const payload = JSON.stringify({
     title,
     body,
     tag,
     reminderId: reminder.id,
-    vibrate: [600, 200, 600, 200, 600, 200, 800],
+    vibrate: [1000, 300, 1000, 300, 1000, 300, 1500],
     requireInteraction: true,
     url: `/?alarm_reminder_id=${reminder.id}`,
     isAntecedencia,
+    actions: [
+      { action: 'open', title: 'Abrir Lembrete' },
+      { action: 'dismiss', title: 'Silenciar' },
+    ],
   });
 
   const pushOptions: webpush.RequestOptions = {
     TTL: 86400, // 24 hours persistence to reliably wake sleeping/locked mobile devices
     urgency: 'high',
+    topic: safeTopic,
     headers: {
       Urgency: 'high',
       TTL: '86400',
+      ...(safeTopic ? { Topic: safeTopic } : {}),
     },
   };
 
@@ -1310,7 +1317,7 @@ setInterval(async () => {
       const userOffset = userTimezoneOffsets.get(userId) ?? 180;
 
       for (const reminder of remindersList) {
-        if (reminder.status_tarefa === 'concluído') continue;
+        if (reminder.status_tarefa === 'concluído' || reminder.status_tarefa === 'concluido') continue;
 
         const execTime = resolveReminderExecutionTimestamp(reminder, userOffset);
         if (!execTime || isNaN(execTime)) continue;

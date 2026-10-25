@@ -1,35 +1,5 @@
 {
-  "userPushSubscriptions": {
-    "test": [
-      {
-        "endpoint": "https://fcm.googleapis.com/fcm/send/xyz"
-      },
-      {
-        "endpoint": "https://fcm.googleapis.com/fcm/send/abc"
-      },
-      {
-        "endpoint": "https://fcm.googleapis.com/test",
-        "keys": {
-          "p256dh": "k",
-          "auth": "a"
-        }
-      }
-    ],
-    "test_user": [
-      {
-        "endpoint": "https://fcm.googleapis.com/test"
-      }
-    ],
-    "usr_68dd8a516780b021": [
-      {
-        "endpoint": "https://fcm.googleapis.com/fcm/send/test",
-        "keys": {
-          "p256dh": "key",
-          "auth": "auth"
-        }
-      }
-    ]
-  },
+  "userPushSubscriptions": {},
   "userLembretes": {
     "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": [],
     "test_verification_user": [],
@@ -48,12 +18,14 @@
         "timestamp_execucao": 1792863600000,
         "timezone_offset_minutes": 180
       }
-    ]
+    ],
+    "mayalimaalves50@gmail.com": []
   },
   "serverTriggeredReminders": [],
   "userTimezoneOffsets": {
     "test_user": 180,
     "usr_68dd8a516780b021": 180,
-    "test_verification": 180
+    "test_verification": 180,
+    "mayalimaalves50@gmail.com": 180
   }
 }

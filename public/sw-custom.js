@@ -682,24 +682,24 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     tag: tag,
     renotify: true,
-    requireInteraction: true,
+    requireInteraction: true, // NÃO deixa o alarme sumir sozinho da tela bloqueada
     silent: false,
-    vibrate: [800, 250, 800, 250, 800, 250, 1200],
+    vibrate: [1000, 300, 1000, 300, 1000, 300, 1500],
     data: {
       url: data.url || (reminderId ? `/?alarm_reminder_id=${reminderId}` : '/'),
       reminderId: reminderId,
       triggerType: triggerType,
     },
     actions: [
-      { action: 'open', title: '🔔 Abrir Alarme' },
+      { action: 'open', title: '📂 Abrir Agenda' },
       { action: 'snooze', title: '⏰ Adiar 10m' },
-      { action: 'complete', title: '✅ Concluir' },
+      { action: 'complete', title: '✅ Concluir Tarefa' },
     ],
   };
 
   event.waitUntil(
     (async () => {
-      // 1. Exibir notificação push nativa com vibração e persistência
+      // 1. Forçar a exibição da Notificação na Tela de Bloqueio do Aparelho
       await self.registration.showNotification(data.title, notificationOptions);
 
       // 2. Marcar no IndexedDB local para evitar duplicação pelo agendador local
@@ -707,7 +707,7 @@ self.addEventListener('push', (event) => {
         await markAlarmTriggeredInDB(reminderId, triggerType);
       }
 
-      // 3. Avisar clientes abertos
+      // 3. Enviar um sinal em tempo real para acordar a interface se ela estiver aberta em segundo plano
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for (const client of clientList) {
         client.postMessage({
