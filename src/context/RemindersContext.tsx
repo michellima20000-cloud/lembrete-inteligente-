@@ -352,13 +352,18 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Firestore Realtime Listener for active user's subcollection
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUser?.id) {
+      setReminders([]);
+      return;
+    }
 
     // Keep cached partition immediately available so timers and UI never reset to empty
     const local = loadLocalPartition(currentUser.id);
     if (local && local.length > 0) {
       setReminders(local);
       pushManager.syncReminders(currentUser.id, local);
+    } else {
+      setReminders([]);
     }
     fetchReminders();
 
