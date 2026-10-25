@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Calendar, Clock, Plus, Tag, AlertTriangle } from 'lucide-react';
+import { X, Calendar, Clock, Plus, Tag, AlertTriangle, Repeat } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 
 interface ManualAddModalProps {
@@ -18,6 +18,7 @@ export const ManualAddModal: React.FC<ManualAddModalProps> = ({ onClose }) => {
   const [antecedencia, setAntecedencia] = useState(0);
   const [categoria, setCategoria] = useState('Trabalho');
   const [urgencia, setUrgencia] = useState<'baixa' | 'media' | 'alta'>('media');
+  const [recorrencia, setRecorrencia] = useState<'nenhuma' | 'diaria' | 'semanal'>('nenhuma');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,6 +35,7 @@ export const ManualAddModal: React.FC<ManualAddModalProps> = ({ onClose }) => {
         antecedencia_minutos: Number(antecedencia),
         categoria,
         urgencia,
+        recorrencia,
       });
       onClose();
     } finally {
@@ -142,6 +144,22 @@ export const ManualAddModal: React.FC<ManualAddModalProps> = ({ onClose }) => {
                 <option value="alta">Alta</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1">
+              <Repeat className="w-3.5 h-3.5 text-indigo-400" />
+              Repetição / Recorrência
+            </label>
+            <select
+              value={recorrencia}
+              onChange={(e) => setRecorrencia(e.target.value as any)}
+              className="w-full rounded-2xl bg-slate-800 border border-slate-700 px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="nenhuma">Não repetir (Lembrete único)</option>
+              <option value="diaria">Repetir diariamente (Todos os dias)</option>
+              <option value="semanal">Repetir semanalmente (Toda semana)</option>
+            </select>
           </div>
 
           <div className="flex items-center gap-2 pt-3">

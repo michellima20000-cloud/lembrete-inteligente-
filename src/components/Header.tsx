@@ -46,7 +46,6 @@ export const Header: React.FC = () => {
             <PWAInstallButton />
 
             {/* Push Notifications Status & Quick Toggle */}
-            {/* Push Notifications Status & Quick Toggle */}
             <button
               onClick={() => {
                 soundAlert.startBackgroundKeepAlive();

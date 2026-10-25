@@ -28,6 +28,8 @@ interface RemindersContextType {
     antecedencia_minutos: number;
     categoria?: string;
     urgencia?: 'baixa' | 'media' | 'alta';
+    recorrencia?: 'nenhuma' | 'diaria' | 'semanal';
+    dias_semana?: number[];
   }) => Promise<void>;
   lastAiResponse: AiParseResponse | null;
   requestNotificationPermission: () => Promise<boolean>;
@@ -861,6 +863,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     antecedencia_minutos: number;
     categoria?: string;
     urgencia?: 'baixa' | 'media' | 'alta';
+    recorrencia?: 'nenhuma' | 'diaria' | 'semanal';
+    dias_semana?: number[];
   }) => {
     if (!currentUser?.id) return;
 
@@ -877,6 +881,8 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       status_tarefa: 'pendente',
       categoria: data.categoria || 'Geral',
       urgencia: data.urgencia || 'media',
+      recorrencia: data.recorrencia || 'nenhuma',
+      dias_semana: data.dias_semana || [],
       criado_em: new Date().toISOString(),
       adiado_vezes: 0,
     };
