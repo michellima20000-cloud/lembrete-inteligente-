@@ -1,8 +1,13 @@
 // High-Volume Continuous Looping Synthesizer & Alarm Engine
 // Engineered for piercing, loud reminder alarms that wake mobile devices and desktop speakers.
-// Uses dual-engine architecture:
-// 1. Looping HTML5 Audio element backed by a synthesized loud WAV siren buffer (immune to background timer throttling)
-// 2. Web Audio API with DynamicsCompressor and multi-oscillator harmonic boosting for maximum acoustic pressure
+// Specifically optimized for Android PWA background playback and lock-screen ringing:
+// 1. Single persistent HTML5 Audio element pre-loaded with loud alarm WAV siren
+// 2. Continuous background Audio Focus keep-alive (un-throttled by Android Doze)
+// 3. Instant volume ramping (0.0001 -> 1.0) on alarm trigger: completely bypasses mobile Autoplay restrictions
+// 4. Android Lock Screen MediaSession integration with interactive Snooze and Dismiss actions
+// 5. Dual-engine Web Audio compressor and multi-oscillator harmonic booster
+
+export type MediaSessionActionCallback = (action: 'pause' | 'stop' | 'nexttrack' | 'previoustrack') => void;
 
 function createAlarmWavDataUri(): string {
   // Generate a 1.2 second loud dual-tone digital alarm sample
@@ -35,7 +40,7 @@ function createAlarmWavDataUri(): string {
   writeString(36, 'data');
   view.setUint32(40, dataSize, true);
 
-  // Synthesize 4 rapid loud penetrating alarm beeps: 950Hz and 1300Hz
+  // Synthesize 4 rapid loud penetrating alarm beeps: 980Hz and 1300Hz
   // Beep schedule in seconds: [0.0 - 0.14], [0.18 - 0.32], [0.36 - 0.50], [0.54 - 0.74]
   const beeps = [
     { start: 0.0, end: 0.14, freq: 980 },
@@ -75,65 +80,19 @@ function createAlarmWavDataUri(): string {
   return 'data:audio/wav;base64,' + btoa(binary);
 }
 
-function createSilentWavDataUri(): string {
-  // Generate 1.0 second sub-audible micro-dither WAV (19Hz @ 0.0003) to keep browser audio thread active
-  const sampleRate = 8000;
-  const numChannels = 1;
-  const duration = 1.0;
-  const totalSamples = Math.floor(sampleRate * duration);
-  const dataSize = totalSamples * 2;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  const writeString = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * 2, true);
-  view.setUint16(32, numChannels * 2, true);
-  view.setUint16(34, 16, true);
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  let offset = 44;
-  for (let i = 0; i < totalSamples; i++) {
-    const t = i / sampleRate;
-    // 19Hz inaudible sub-bass oscillation: keeps Android audio focus and prevents CPU suspension
-    const sample = Math.sin(2 * Math.PI * 19 * t) * 0.0003;
-    const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-    offset += 2;
-  }
-
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return 'data:audio/wav;base64,' + btoa(binary);
-}
-
 class SoundAlertManager {
   private audioCtx: AudioContext | null = null;
   private isSoundEnabled = true;
   private isRinging = false;
-  private loopAudioElement: HTMLAudioElement | null = null;
-  private keepAliveAudioElement: HTMLAudioElement | null = null;
-  private isKeepAliveActive = false;
+  // Single persistent HTMLAudioElement ensuring Android Audio Focus is never lost
+  private primaryAudioElement: HTMLAudioElement | null = null;
+  private isKeepAlivePlaying = false;
   private audioPlayPromise: Promise<void> | null = null;
   private webAudioInterval: ReturnType<typeof setInterval> | null = null;
   private vibrationInterval: ReturnType<typeof setInterval> | null = null;
   private cachedWavUri: string | null = null;
+  private actionListeners: Set<MediaSessionActionCallback> = new Set();
+  private currentReminderTitle = '';
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -143,24 +102,16 @@ class SoundAlertManager {
           if (ctx && ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
-          // Activate background media session to prevent mobile tab freezing
+          // Activate background media session and start persistent audio channel
           this.startBackgroundKeepAlive();
 
           if (this.isRinging) {
-            // Force re-triggering ringing on any user tap/touch to break autoplay suppression
-            this.startRingingAlarm();
-          } else if (this.loopAudioElement && this.loopAudioElement.paused && this.isRinging) {
-            if (!this.audioPlayPromise) {
-              this.audioPlayPromise = this.loopAudioElement.play();
-              this.audioPlayPromise
-                ?.catch((err) => this.handleAudioError(err))
-                .finally(() => {
-                  this.audioPlayPromise = null;
-                });
-            }
+            this.startRingingAlarm(this.currentReminderTitle);
           }
         } catch {}
       };
+
+      // Register multi-gesture unlock hooks
       window.addEventListener('click', unlockAudio, { passive: true });
       window.addEventListener('touchstart', unlockAudio, { passive: true });
       window.addEventListener('pointerdown', unlockAudio, { passive: true });
@@ -172,15 +123,14 @@ class SoundAlertManager {
 
   private handleAudioError(err: any) {
     if (!err) return;
-    // Gracefully ignore AbortError caused by pause() interrupting play() when user dismisses/snoozes
     if (
       err.name === 'AbortError' ||
       (typeof err.message === 'string' && (err.message.includes('interrupted') || err.message.includes('pause')))
     ) {
       return;
     }
-    // Autoplay restrictions are normal before the first user gesture
     if (err.name === 'NotAllowedError') {
+      console.warn('[SoundAlert] Autoplay deferred until user interaction');
       return;
     }
   }
@@ -199,29 +149,41 @@ class SoundAlertManager {
     return this.audioCtx;
   }
 
-  private getLoopAudioElement(): HTMLAudioElement | null {
+  /**
+   * Lazily initializes and returns the single persistent HTMLAudioElement.
+   * This element is NEVER replaced or destroyed, ensuring Android keeps the AudioTrack active.
+   */
+  private getPrimaryAudioElement(): HTMLAudioElement | null {
     if (typeof window === 'undefined') return null;
-    if (!this.loopAudioElement) {
+    if (!this.primaryAudioElement) {
       try {
         if (!this.cachedWavUri) {
           this.cachedWavUri = createAlarmWavDataUri();
         }
         const audio = new Audio(this.cachedWavUri);
         audio.loop = true;
-        audio.volume = 1.0;
+        audio.volume = 0.0001; // Silent baseline: maintains Android audio focus without sound
         audio.preload = 'auto';
-        this.loopAudioElement = audio;
+        this.primaryAudioElement = audio;
       } catch (err) {
-        console.warn('Could not initialize loop audio element:', err);
+        console.warn('[SoundAlert] Could not initialize primary audio element:', err);
       }
     }
-    return this.loopAudioElement;
+    return this.primaryAudioElement;
   }
 
   public setSoundEnabled(enabled: boolean) {
     this.isSoundEnabled = enabled;
     if (!enabled) {
       this.stopRingingAlarm();
+      if (this.primaryAudioElement) {
+        try {
+          this.primaryAudioElement.pause();
+          this.isKeepAlivePlaying = false;
+        } catch {}
+      }
+    } else {
+      this.startBackgroundKeepAlive();
     }
   }
 
@@ -233,9 +195,22 @@ class SoundAlertManager {
     return this.isRinging;
   }
 
+  public onMediaSessionAction(cb: MediaSessionActionCallback): () => void {
+    this.actionListeners.add(cb);
+    return () => {
+      this.actionListeners.delete(cb);
+    };
+  }
+
+  private dispatchMediaSessionAction(action: 'pause' | 'stop' | 'nexttrack' | 'previoustrack') {
+    this.actionListeners.forEach((cb) => {
+      try { cb(action); } catch {}
+    });
+  }
+
   /**
-   * Generates a single high-impact dual-tone alarm burst at maximum loudness.
-   * Uses DynamicsCompressor to amplify output to the limit without distortion.
+   * Generates a single high-impact dual-tone alarm burst at maximum loudness via Web Audio.
+   * Used to amplify the output when the browser tab is active.
    */
   public playAlarmBurst() {
     if (!this.isSoundEnabled) return;
@@ -245,7 +220,7 @@ class SoundAlertManager {
 
       const now = ctx.currentTime;
 
-      // Compressor to maximize perceptible loudness
+      // DynamicsCompressor to amplify perceptible loudness without clipping
       const compressor = ctx.createDynamicsCompressor();
       compressor.threshold.setValueAtTime(-14, now);
       compressor.knee.setValueAtTime(30, now);
@@ -254,7 +229,6 @@ class SoundAlertManager {
       compressor.release.setValueAtTime(0.12, now);
       compressor.connect(ctx.destination);
 
-      // Master gain booster
       const masterGain = ctx.createGain();
       masterGain.gain.setValueAtTime(1.0, now);
       masterGain.connect(compressor);
@@ -271,17 +245,14 @@ class SoundAlertManager {
         const start = now + time;
         const end = start + dur;
 
-        // Primary tone (sawtooth for piercing sharpness)
         const osc = ctx.createOscillator();
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(freq, start);
 
-        // Sub/harmonic tone for body and room presence
         const sub = ctx.createOscillator();
         sub.type = 'square';
         sub.frequency.setValueAtTime(freq * 0.5, start);
 
-        // High overtone
         const overtone = ctx.createOscillator();
         overtone.type = 'sine';
         overtone.frequency.setValueAtTime(freq * 2, start);
@@ -303,46 +274,54 @@ class SoundAlertManager {
         overtone.stop(end);
       });
 
-      // Powerful mobile vibration
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate([400, 100, 400, 100, 500]);
       }
     } catch (e) {
-      console.warn('Could not play alarm burst:', e);
+      console.warn('[SoundAlert] Could not play alarm burst:', e);
     }
   }
 
+  /**
+   * Starts the persistent audio keep-alive stream.
+   * Runs at volume 0.0001 (digital silence), which claims Android Audio Focus and
+   * informs Android that this tab is playing media — preventing process sleep.
+   */
   public startBackgroundKeepAlive() {
-    if (typeof window === 'undefined') return;
-    if (this.isKeepAliveActive && this.keepAliveAudioElement && !this.keepAliveAudioElement.paused) return;
+    if (typeof window === 'undefined' || !this.isSoundEnabled) return;
+    const audio = this.getPrimaryAudioElement();
+    if (!audio) return;
+
+    if (!this.isRinging) {
+      audio.volume = 0.0001;
+    }
+
+    if (this.isKeepAlivePlaying && !audio.paused) return;
 
     try {
-      if (!this.keepAliveAudioElement) {
-        const uri = createSilentWavDataUri();
-        const audio = new Audio(uri);
-        audio.loop = true;
-        audio.volume = 0.001; // Digital silence: prevents OS from freezing background JS timers
-        audio.preload = 'auto';
-        this.keepAliveAudioElement = audio;
+      const p = audio.play();
+      if (p) {
+        p.then(() => {
+          this.isKeepAlivePlaying = true;
+          this.registerMediaSession(this.isRinging, this.currentReminderTitle);
+        }).catch((e) => {
+          this.handleAudioError(e);
+        });
       }
-
-      this.keepAliveAudioElement.play().then(() => {
-        this.isKeepAliveActive = true;
-        this.registerMediaSession(false);
-      }).catch((e) => {
-        this.handleAudioError(e);
-      });
     } catch {}
   }
 
+  /**
+   * Registers mediaSession metadata so Android lock screen shows alarm controls.
+   */
   public registerMediaSession(isAlarmRinging = false, reminderTitle?: string) {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       try {
         if (isAlarmRinging) {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: `🚨 [ALARME] ${reminderTitle || 'Compromisso Agendado'}`,
-            artist: 'Lembrete Inteligente',
-            album: 'Alarme em Execução',
+            artist: 'Lembrete Inteligente (Toque para Ver)',
+            album: 'Alarme em Execução Contínua',
             artwork: [
               { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
               { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -362,20 +341,37 @@ class SoundAlertManager {
 
         navigator.mediaSession.playbackState = 'playing';
 
+        // Play handler: wake / un-pause
         navigator.mediaSession.setActionHandler('play', () => {
           if (this.isRinging) {
-            this.startRingingAlarm(reminderTitle);
+            this.startRingingAlarm(this.currentReminderTitle);
           } else {
             this.startBackgroundKeepAlive();
           }
         });
 
+        // Pause handler: user tapped Pause on the lock screen widget -> stops ringing!
         navigator.mediaSession.setActionHandler('pause', () => {
           this.stopRingingAlarm();
+          this.dispatchMediaSessionAction('pause');
         });
 
+        // Stop handler: user tapped Stop on the lock screen widget -> stops ringing!
         navigator.mediaSession.setActionHandler('stop', () => {
           this.stopRingingAlarm();
+          this.dispatchMediaSessionAction('stop');
+        });
+
+        // Next Track handler: mapped to Snooze 10 minutes from lock screen!
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          this.stopRingingAlarm();
+          this.dispatchMediaSessionAction('nexttrack');
+        });
+
+        // Previous Track handler: mapped to Complete from lock screen!
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          this.stopRingingAlarm();
+          this.dispatchMediaSessionAction('previoustrack');
         });
       } catch {}
     }
@@ -384,37 +380,32 @@ class SoundAlertManager {
   /**
    * Starts continuous, loud, looping alarm ringing that NEVER stops on its own.
    * Continues sounding and vibrating UNTIL the user explicitly clicks Concluir or Adiar!
+   *
+   * KEY ARCHITECTURAL ADVANTAGE:
+   * Since this.primaryAudioElement was ALREADY playing during keep-alive, ramping
+   * volume to 1.0 does NOT count as a new autoplay, so Android allows it even
+   * with the screen locked or tab minimized!
    */
   public startRingingAlarm(reminderTitle?: string) {
     if (!this.isSoundEnabled) return;
     this.isRinging = true;
-
-    // Pause silent keep-alive while ringing loud alarm
-    if (this.keepAliveAudioElement && !this.keepAliveAudioElement.paused) {
-      try { this.keepAliveAudioElement.pause(); } catch {}
+    if (reminderTitle) {
+      this.currentReminderTitle = reminderTitle;
     }
-    this.registerMediaSession(true, reminderTitle);
 
-    // 1. Play continuous HTML5 looping audio (immune to background tab throttling)
-    try {
-      const audio = this.getLoopAudioElement();
-      if (audio) {
-        audio.volume = 1.0;
-        if (this.audioPlayPromise) {
-          this.audioPlayPromise = this.audioPlayPromise
-            .then(() => {
-              if (this.isRinging && audio.paused) {
-                try {
-                  audio.currentTime = 0;
-                } catch {}
-                return audio.play();
-              }
-            })
-            .catch((err) => this.handleAudioError(err));
-        } else {
-          try {
-            audio.currentTime = 0;
-          } catch {}
+    const audio = this.getPrimaryAudioElement();
+    if (audio) {
+      // 1. Immediately ramp volume to 100% MAXIMUM PIERCING LOUDNESS
+      audio.volume = 1.0;
+      audio.loop = true;
+
+      // 2. Restart playback position if already playing, or call play()
+      try {
+        audio.currentTime = 0;
+      } catch {}
+
+      if (audio.paused) {
+        if (!this.audioPlayPromise) {
           this.audioPlayPromise = audio.play();
           this.audioPlayPromise
             ?.catch((err) => this.handleAudioError(err))
@@ -423,14 +414,14 @@ class SoundAlertManager {
             });
         }
       }
-    } catch (e) {
-      // Loop audio play deferred
     }
 
-    // 2. Play immediate Web Audio burst for instant maximum loudness
+    this.registerMediaSession(true, this.currentReminderTitle);
+
+    // 3. Play immediate Web Audio burst for maximum punch
     this.playAlarmBurst();
 
-    // 3. Clear existing timers to avoid duplicate stacking
+    // 4. Reset repeating timers to prevent overlapping intervals
     if (this.webAudioInterval) {
       clearInterval(this.webAudioInterval);
       this.webAudioInterval = null;
@@ -440,7 +431,7 @@ class SoundAlertManager {
       this.vibrationInterval = null;
     }
 
-    // 4. Foreground Web Audio reinforcing pulse every 1.2s
+    // 5. Reinforcing Web Audio pulse every 1.2s when awake
     this.webAudioInterval = setInterval(() => {
       if (!this.isRinging || !this.isSoundEnabled) {
         this.stopRingingAlarm();
@@ -449,50 +440,33 @@ class SoundAlertManager {
       this.playAlarmBurst();
     }, 1200);
 
-    // 5. Continuous mobile vibration loop
+    // 6. Continuous mobile vibration loop: intense alternating buzzes
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-      navigator.vibrate([600, 200, 600, 200, 800]);
+      navigator.vibrate([800, 250, 800, 250, 800, 250, 1200]);
       this.vibrationInterval = setInterval(() => {
         if (!this.isRinging) {
           if (this.vibrationInterval) clearInterval(this.vibrationInterval);
           return;
         }
-        navigator.vibrate([600, 200, 600, 200, 800]);
+        navigator.vibrate([800, 250, 800, 250, 800, 250, 1200]);
       }, 2500);
     }
   }
 
   /**
-   * Stops the continuous alarm ringing completely when user acts.
+   * Stops the loud alarm ringing, lowering volume back to silent keep-alive.
+   * DOES NOT PAUSE the element, maintaining Android Audio Focus for the next alarm!
    */
   public stopRingingAlarm() {
     this.isRinging = false;
-    this.registerMediaSession(false);
+    this.currentReminderTitle = '';
 
-    // Stop HTML5 looping audio safely without interrupting in-flight play()
-    if (this.loopAudioElement) {
-      const audio = this.loopAudioElement;
-      if (this.audioPlayPromise) {
-        this.audioPlayPromise
-          .then(() => {
-            if (!this.isRinging) {
-              try {
-                audio.pause();
-                audio.currentTime = 0;
-              } catch {}
-            }
-          })
-          .catch(() => {})
-          .finally(() => {
-            this.audioPlayPromise = null;
-          });
-      } else {
-        try {
-          audio.pause();
-          audio.currentTime = 0;
-        } catch {}
-      }
+    // Drop volume back to 0.0001 (silent baseline), KEEP PLAYING to preserve Audio Focus
+    if (this.primaryAudioElement) {
+      this.primaryAudioElement.volume = 0.0001;
     }
+
+    this.registerMediaSession(false);
 
     // Stop repeating timers
     if (this.webAudioInterval) {
@@ -504,19 +478,12 @@ class SoundAlertManager {
       this.vibrationInterval = null;
     }
 
-    // Cancel any active vibration
+    // Cancel active vibration
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(0);
       } catch {}
     }
-
-    // Resume silent background keep-alive so subsequent reminders stay active in background
-    setTimeout(() => {
-      if (!this.isRinging) {
-        this.startBackgroundKeepAlive();
-      }
-    }, 400);
   }
 
   public playAlarm() {
@@ -600,9 +567,12 @@ export const soundAlert = new SoundAlertManager();
 // Safety lock: instantly re-activate AudioContext and force full alarm ringing when screen wakes or tab becomes visible
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && soundAlert.getIsRinging()) {
-      soundAlert.startRingingAlarm();
+    if (document.visibilityState === 'visible') {
+      if (soundAlert.getIsRinging()) {
+        soundAlert.startRingingAlarm();
+      } else {
+        soundAlert.startBackgroundKeepAlive();
+      }
     }
   });
 }
-

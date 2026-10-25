@@ -1,7 +1,7 @@
 // Service Worker entry point for Lembrete Inteligente PWA
 // Imports background push and alarm handlers and caches essential PWA assets
 
-const CACHE_NAME = 'lembrete-inteligente-pwa-v6';
+const CACHE_NAME = 'lembrete-inteligente-pwa-v7';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',

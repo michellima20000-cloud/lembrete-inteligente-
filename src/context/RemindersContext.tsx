@@ -706,6 +706,33 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  // Listen to lock screen / media notification interactions (Pause, Stop, Next = Snooze, Prev = Concluir)
+  useEffect(() => {
+    const unsub = soundAlert.onMediaSessionAction((action) => {
+      if (action === 'pause' || action === 'stop') {
+        soundAlert.stopRingingAlarm();
+        setActiveAlarmReminder(null);
+      } else if (action === 'nexttrack') {
+        if (activeAlarmReminder?.id) {
+          snoozeReminder(activeAlarmReminder.id, 10).catch(() => {});
+        } else {
+          soundAlert.stopRingingAlarm();
+          setActiveAlarmReminder(null);
+        }
+      } else if (action === 'previoustrack') {
+        if (activeAlarmReminder?.id) {
+          updateStatus(activeAlarmReminder.id, 'concluído').catch(() => {});
+        } else {
+          soundAlert.stopRingingAlarm();
+          setActiveAlarmReminder(null);
+        }
+      }
+    });
+    return () => {
+      unsub();
+    };
+  }, [activeAlarmReminder]);
+
   const deleteReminder = async (id: string) => {
     if (!currentUser?.id) return;
     deleteItemFromFirestore(id);
