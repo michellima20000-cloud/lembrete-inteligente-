@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { Download, CheckCircle2, Sparkles } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { PWAInstallModal } from './PWAInstallModal';
+import { ModalLoadingFallback } from './skeletons/ModalLoadingFallback';
+
+const PWAInstallModal = React.lazy(() =>
+  import('./PWAInstallModal').then((m) => ({ default: m.PWAInstallModal }))
+);
 
 export const PWAInstallButton: React.FC = () => {
   const { isInstallable, isInstalled, install } = usePWAInstall();
@@ -47,7 +51,11 @@ export const PWAInstallButton: React.FC = () => {
         <span className="inline xs:hidden sm:hidden">Instalar</span>
       </button>
 
-      {showModal && <PWAInstallModal onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <PWAInstallModal onClose={() => setShowModal(false)} />
+        </React.Suspense>
+      )}
     </>
   );
 };

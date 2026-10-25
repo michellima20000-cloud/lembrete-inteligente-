@@ -3,8 +3,12 @@ import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellRing } from 'lucide-
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
-import { UserAccountModal } from './UserAccountModal';
 import { soundAlert } from '../utils/audioAlert';
+import { ModalLoadingFallback } from './skeletons/ModalLoadingFallback';
+
+const UserAccountModal = React.lazy(() =>
+  import('./UserAccountModal').then((m) => ({ default: m.UserAccountModal }))
+);
 
 export const Header: React.FC = () => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
@@ -131,7 +135,11 @@ export const Header: React.FC = () => {
         </div>
       </header>
 
-      {showUserModal && <UserAccountModal onClose={() => setShowUserModal(false)} />}
+      {showUserModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <UserAccountModal onClose={() => setShowUserModal(false)} />
+        </React.Suspense>
+      )}
     </>
   );
 };

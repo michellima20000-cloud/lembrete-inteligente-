@@ -1,19 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { UserProvider, useUser } from './context/UserContext';
 import { RemindersProvider } from './context/RemindersContext';
 import { Header } from './components/Header';
-import { VoiceAndTextInput } from './components/VoiceAndTextInput';
-import { TimelineAgenda } from './components/TimelineAgenda';
-import { ActiveAlarmModal } from './components/ActiveAlarmModal';
-import { ManualAddModal } from './components/ManualAddModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
-import { LoginScreen } from './components/LoginScreen';
 import { PushNotificationBanner } from './components/PushNotificationBanner';
 import { MobilePWAInstallBanner } from './components/MobilePWAInstallBanner';
+import { TimelineSkeleton } from './components/skeletons/TimelineSkeleton';
+import { VoiceInputSkeleton } from './components/skeletons/VoiceInputSkeleton';
+import { ModalLoadingFallback } from './components/skeletons/ModalLoadingFallback';
+import { startCriticalImagePreloading } from './utils/imagePreloader';
+
+// Major components code-split with React.lazy
+const LoginScreen = lazy(() =>
+  import('./components/LoginScreen').then((m) => ({ default: m.LoginScreen }))
+);
+
+const VoiceAndTextInput = lazy(() =>
+  import('./components/VoiceAndTextInput').then((m) => ({ default: m.VoiceAndTextInput }))
+);
+
+const TimelineAgenda = lazy(() =>
+  import('./components/TimelineAgenda').then((m) => ({ default: m.TimelineAgenda }))
+);
+
+const ManualAddModal = lazy(() =>
+  import('./components/ManualAddModal').then((m) => ({ default: m.ManualAddModal }))
+);
+
+const ActiveAlarmModal = lazy(() =>
+  import('./components/ActiveAlarmModal').then((m) => ({ default: m.ActiveAlarmModal }))
+);
 
 function MainApp() {
   const { isAuthenticated, isAuthReady } = useUser();
   const [showManualModal, setShowManualModal] = useState(false);
+
+  // Trigger high-performance hardware image preloading on startup
+  useEffect(() => {
+    startCriticalImagePreloading();
+  }, []);
 
   // Loading state while Firebase checks auth token (only if no cached user session)
   if (!isAuthReady && !isAuthenticated) {
@@ -29,9 +54,22 @@ function MainApp() {
     );
   }
 
-  // If not authenticated, require Google login
+  // If not authenticated, require login screen (code-split via Suspense)
   if (!isAuthenticated) {
-    return <LoginScreen />;
+    return (
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-2xl shadow-lg shadow-indigo-600/30 animate-pulse">
+              ⏰
+            </div>
+            <p className="mt-4 text-xs font-semibold text-slate-400">Carregando...</p>
+          </div>
+        }
+      >
+        <LoginScreen />
+      </Suspense>
+    );
   }
 
   return (
@@ -47,11 +85,15 @@ function MainApp() {
         {/* Push Notifications Activation / Status Banner */}
         <PushNotificationBanner />
 
-        {/* Voice and Text AI Brain Input */}
-        <VoiceAndTextInput onOpenManualModal={() => setShowManualModal(true)} />
+        {/* Voice and Text AI Brain Input (Code-split with fluid skeleton) */}
+        <Suspense fallback={<VoiceInputSkeleton />}>
+          <VoiceAndTextInput onOpenManualModal={() => setShowManualModal(true)} />
+        </Suspense>
 
-        {/* Timeline Agenda strictly ordered */}
-        <TimelineAgenda />
+        {/* Timeline Agenda strictly ordered (Code-split with fluid skeleton) */}
+        <Suspense fallback={<TimelineSkeleton />}>
+          <TimelineAgenda />
+        </Suspense>
       </main>
 
       {/* Footer / Mobile Safe Area */}
@@ -62,9 +104,17 @@ function MainApp() {
         </p>
       </footer>
 
-      {/* Overlays & Modals */}
-      {showManualModal && <ManualAddModal onClose={() => setShowManualModal(false)} />}
-      <ActiveAlarmModal />
+      {/* Overlays & Modals (Code-split and loaded on-demand via Suspense) */}
+      {showManualModal && (
+        <Suspense fallback={<ModalLoadingFallback />}>
+          <ManualAddModal onClose={() => setShowManualModal(false)} />
+        </Suspense>
+      )}
+
+      <Suspense fallback={null}>
+        <ActiveAlarmModal />
+      </Suspense>
+
       <OfflineIndicator />
     </div>
   );

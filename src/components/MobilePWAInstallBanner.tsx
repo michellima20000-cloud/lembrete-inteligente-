@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { Smartphone, Download, X, Sparkles, CheckCircle2, Apple } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { PWAInstallModal } from './PWAInstallModal';
+import { ModalLoadingFallback } from './skeletons/ModalLoadingFallback';
+
+const PWAInstallModal = React.lazy(() =>
+  import('./PWAInstallModal').then((m) => ({ default: m.PWAInstallModal }))
+);
 
 export const MobilePWAInstallBanner: React.FC = () => {
   const { isInstallable, isInstalled, isIOS, isAndroid, isMobile, install } = usePWAInstall();
@@ -90,7 +94,11 @@ export const MobilePWAInstallBanner: React.FC = () => {
         </div>
       </div>
 
-      {showModal && <PWAInstallModal onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <PWAInstallModal onClose={() => setShowModal(false)} />
+        </React.Suspense>
+      )}
     </>
   );
 };
