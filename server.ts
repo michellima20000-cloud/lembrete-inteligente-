@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import webpush from 'web-push';
 import { GoogleGenAI } from '@google/genai';
 import { parseReminderCommand } from './src/utils/reminderParser.ts';
+import { calculateNextRecurrence } from './src/utils/recurrence.ts';
 
 dotenv.config();
 
@@ -85,6 +86,8 @@ export interface Lembrete {
   status_tarefa: 'pendente' | 'concluído' | 'adiado';
   categoria?: string;
   urgencia?: 'baixa' | 'media' | 'alta';
+  recorrencia?: 'nenhuma' | 'diaria' | 'semanal';
+  dias_semana?: number[];
   criado_em: string;
   adiado_vezes?: number;
   notificado_em?: number;
@@ -538,6 +541,8 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     status_tarefa: 'pendente',
     categoria: categoria || 'Geral',
     urgencia: urgencia || 'media',
+    recorrencia: req.body.recorrencia || 'nenhuma',
+    dias_semana: Array.isArray(req.body.dias_semana) ? req.body.dias_semana : [],
     criado_em: req.body.criado_em || new Date().toISOString(),
     adiado_vezes: 0,
   };
@@ -588,6 +593,8 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
     categoria,
     urgencia,
     timestamp_execucao,
+    recorrencia,
+    dias_semana,
   } = req.body;
 
   const clientOffset = getClientOffset(req, userId);
@@ -595,6 +602,13 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
 
   if (status_tarefa) {
     item.status_tarefa = status_tarefa;
+  }
+
+  if (recorrencia !== undefined) {
+    item.recorrencia = recorrencia;
+  }
+  if (Array.isArray(dias_semana)) {
+    item.dias_semana = dias_semana;
   }
 
   if (adiar_minutos) {
@@ -639,6 +653,64 @@ app.patch('/api/reminders/:id', (req: Request, res: Response) => {
       ? `Lembrete adiado com sucesso por ${req.body.adiar_minutos || 10} minutos.`
       : 'Lembrete atualizado com sucesso.',
   });
+});
+
+// API: Advance recurring reminder to next occurrence
+app.post('/api/reminders/:id/advance', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const userId = (req.query.user_id as string) || (req.headers['x-user-id'] as string) || req.body?.user_id;
+
+  let foundItem: Lembrete | null = null;
+  let targetUser = userId;
+
+  if (targetUser) {
+    const list = userLembretes.get(targetUser) || [];
+    const item = list.find((r) => r.id === id);
+    if (item) foundItem = item;
+  } else {
+    for (const [uId, uList] of userLembretes.entries()) {
+      const item = uList.find((r) => r.id === id);
+      if (item) {
+        foundItem = item;
+        targetUser = uId;
+        break;
+      }
+    }
+  }
+
+  if (!foundItem) {
+    return res.status(404).json({ status: 'erro', mensagem: 'Lembrete não encontrado.' });
+  }
+
+  const { nextDateIso, nextTimestamp } = req.body || {};
+  if (nextDateIso && nextTimestamp) {
+    foundItem.data_hora_execucao = nextDateIso;
+    foundItem.timestamp_execucao = Number(nextTimestamp);
+  } else {
+    const nextOccur = calculateNextRecurrence(
+      foundItem.data_hora_execucao,
+      foundItem.recorrencia,
+      foundItem.dias_semana,
+      Date.now()
+    );
+    if (nextOccur) {
+      foundItem.data_hora_execucao = nextOccur.nextDateIso;
+      foundItem.timestamp_execucao = nextOccur.nextTimestamp;
+    }
+  }
+
+  foundItem.status_tarefa = 'pendente';
+  foundItem.adiado_vezes = 0;
+
+  // Clear triggered notification keys so next cycle fires normally
+  for (const k of Array.from(serverTriggeredReminders)) {
+    if (k.includes(id)) {
+      serverTriggeredReminders.delete(k);
+    }
+  }
+
+  saveCache();
+  return res.json({ status: 'sucesso', lembrete: foundItem });
 });
 
 // API: Delete Reminder
@@ -1163,6 +1235,30 @@ setInterval(async () => {
             serverTriggeredReminders.add(execKey);
             saveCache();
             await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
+
+            // Se for recorrente, avançar para o próximo ciclo após o disparo!
+            if (reminder.recorrencia === 'diaria' || reminder.recorrencia === 'semanal') {
+              const nextOccur = calculateNextRecurrence(
+                reminder.data_hora_execucao,
+                reminder.recorrencia,
+                reminder.dias_semana,
+                now
+              );
+              if (nextOccur) {
+                reminder.data_hora_execucao = nextOccur.nextDateIso;
+                reminder.timestamp_execucao = nextOccur.nextTimestamp;
+                reminder.status_tarefa = 'pendente';
+                reminder.adiado_vezes = 0;
+                // Remover chaves antigas de disparo
+                for (const k of Array.from(serverTriggeredReminders)) {
+                  if (k.includes(reminder.id)) {
+                    serverTriggeredReminders.delete(k);
+                  }
+                }
+                saveCache();
+                console.log(`[Server Background Runner] Lembrete recorrente "${reminder.titulo}" avançado para ${nextOccur.nextDateIso}`);
+              }
+            }
           } else if (diffExec >= 5 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
             // Mark old historical execution as triggered on boot/reconnect to prevent noise
             serverTriggeredReminders.add(execKey);

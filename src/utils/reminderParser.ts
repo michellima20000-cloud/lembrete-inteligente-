@@ -22,6 +22,8 @@ export interface ParseReminderResult {
     antecedencia_minutos?: number;
     categoria?: string;
     urgencia?: 'baixa' | 'media' | 'alta';
+    recorrencia?: 'nenhuma' | 'diaria' | 'semanal';
+    dias_semana?: number[];
   };
   mensagem_sistema: string;
 }
@@ -415,6 +417,55 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   const isTomorrow = !isAfterTomorrow && /(?:^|[^\w\u00C0-\u017F])amanh[ãa](?:[^\w\u00C0-\u017F]|$)/i.test(text);
   const isToday = /(?:^|[^\w\u00C0-\u017F])hoje(?:[^\w\u00C0-\u017F]|$)/i.test(text);
 
+  // Recurrence detection (Diária ou Semanal)
+  let recorrencia: 'nenhuma' | 'diaria' | 'semanal' = 'nenhuma';
+  let diasSemanaRecorrencia: number[] = [];
+
+  const isDaily = /(?:^|[^\w\u00C0-\u017F])(?:todos\s+os\s+dias|todo\s+dia|diariamente|di[aá]rio|di[aá]ria)(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isWeekly = /(?:^|[^\w\u00C0-\u017F])(?:toda\s+semana|semanalmente|semanal)(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isWeekdays = /(?:^|[^\w\u00C0-\u017F])(?:de\s+segunda\s+a\s+sexta|dias\s+[uú]teis|dias\s+de\s+semana)(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+  const isWeekend = /(?:^|[^\w\u00C0-\u017F])(?:fins?\s+de\s+semana|fim\s+de\s+semana)(?:[^\w\u00C0-\u017F]|$)/i.test(text);
+
+  if (isDaily) {
+    recorrencia = 'diaria';
+    diasSemanaRecorrencia = [0, 1, 2, 3, 4, 5, 6];
+  } else if (isWeekdays) {
+    recorrencia = 'semanal';
+    diasSemanaRecorrencia = [1, 2, 3, 4, 5];
+  } else if (isWeekend) {
+    recorrencia = 'semanal';
+    diasSemanaRecorrencia = [0, 6];
+  } else if (isWeekly) {
+    recorrencia = 'semanal';
+    diasSemanaRecorrencia = [];
+  } else {
+    // Specific recurring days of week (e.g. "toda segunda", "toda terça e quinta")
+    const repeatingDayMap: Record<string, number> = {
+      'toda\\s+segunda(?:-feira)?': 1,
+      'todas\\s+as\\s+segundas(?:-feiras)?': 1,
+      'toda\\s+ter[cç]a(?:-feira)?': 2,
+      'todas\\s+as\\s+ter[cç]as(?:-feiras)?': 2,
+      'toda\\s+quarta(?:-feira)?': 3,
+      'todas\\s+as\\s+quartas(?:-feiras)?': 3,
+      'toda\\s+quinta(?:-feira)?': 4,
+      'todas\\s+as\\s+quintas(?:-feiras)?': 4,
+      'toda\\s+sexta(?:-feira)?': 5,
+      'todas\\s+as\\s+sextas(?:-feiras)?': 5,
+      'todo\\s+s[aá]bado': 6,
+      'todos\\s+os\\s+s[aá]bados': 6,
+      'todo\\s+domingo': 0,
+      'todos\\s+os\\s+domingos': 0,
+    };
+    for (const [pattern, dNum] of Object.entries(repeatingDayMap)) {
+      if (new RegExp(`(?:^|[^\\w\\u00C0-\\u017F])${pattern}(?:[^\\w\\u00C0-\\u017F]|$)`, 'i').test(text)) {
+        recorrencia = 'semanal';
+        if (!diasSemanaRecorrencia.includes(dNum)) {
+          diasSemanaRecorrencia.push(dNum);
+        }
+      }
+    }
+  }
+
   // Explicit period markers (Brazilian Portuguese)
   const isMorning = /(?:^|[^\w\u00C0-\u017F])(?:da\s+manh[ãa]|de\s+manh[ãa]|pela\s+manh[ãa]|cedo|matutin[ao])(?:[^\w\u00C0-\u017F]|$)/i.test(text);
   const isAfternoon = /(?:^|[^\w\u00C0-\u017F])(?:da\s+tarde|de\s+tarde|pela\s+tarde|[àa]\s+tarde|vespertin[ao])(?:[^\w\u00C0-\u017F]|$)/i.test(text);
@@ -603,6 +654,12 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
   cleanedTitle = cleanedTitle.replace(wordBound('(?:da|de|pela)\\s+madrugada'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('meio[- ]dia|meia[- ]noite'), ' ');
   cleanedTitle = cleanedTitle.replace(wordBound('(?:dia\\s+)\\d{1,2}'), ' ');
+  // Strip recurrence expressions from title
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:todos\\s+os\\s+dias|todo\\s+dia|diariamente|di[aá]rio|di[aá]ria)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:toda\\s+semana|semanalmente|semanal)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:de\\s+segunda\\s+a\\s+sexta|dias\\s+[uú]teis|dias\\s+de\\s+semana)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:fins?\\s+de\\s+semana|fim\\s+de\\s+semana)'), ' ');
+  cleanedTitle = cleanedTitle.replace(wordBound('(?:toda\\s+|todas\\s+as\\s+|todo\\s+|todos\\s+os\\s+)(?:segundas?|ter[cç]as?|quartas?|quintas?|sextas?|s[aá]bados?|domingos?)(?:[ -]feiras?)?'), ' ');
   cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
   // Strip connector words at the beginning or end
@@ -717,6 +774,13 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
 
   const periodLabel = target.getHours() < 12 ? 'da manhã' : target.getHours() < 18 ? 'da tarde' : 'da noite';
 
+  const recurrenceNotice =
+    recorrencia === 'diaria'
+      ? ' [Repetição diária]'
+      : recorrencia === 'semanal'
+      ? ' [Repetição semanal]'
+      : '';
+
   return {
     status: 'sucesso',
     user_id: params.user_id,
@@ -729,7 +793,9 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
       antecedencia_minutos: antecedencia,
       categoria,
       urgencia,
+      recorrencia: recorrencia !== 'nenhuma' ? recorrencia : undefined,
+      dias_semana: diasSemanaRecorrencia.length > 0 ? diasSemanaRecorrencia : undefined,
     },
-    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado para ${dayDesc} às ${formattedHour} (${periodLabel})!`,
+    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado para ${dayDesc} às ${formattedHour} (${periodLabel})${recurrenceNotice}!`,
   };
 }

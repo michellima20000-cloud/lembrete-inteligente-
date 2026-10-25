@@ -1,5 +1,7 @@
 export type StatusTarefa = 'pendente' | 'concluído' | 'adiado';
 
+export type RecorrenciaTipo = 'nenhuma' | 'diaria' | 'semanal';
+
 export interface Lembrete {
   id: string;
   user_id: string;
@@ -11,6 +13,8 @@ export interface Lembrete {
   status_tarefa: StatusTarefa;
   categoria?: string;
   urgencia?: 'baixa' | 'media' | 'alta';
+  recorrencia?: RecorrenciaTipo;
+  dias_semana?: number[]; // 0=Dom, 1=Seg, 2=Ter, 3=Qua, 4=Qui, 5=Sex, 6=Sáb
   criado_em: string;
   adiado_vezes?: number;
   notificado_em?: number;
@@ -37,6 +41,8 @@ export interface AiParseResponse {
     antecedencia_minutos?: number;
     categoria?: string;
     urgencia?: 'baixa' | 'media' | 'alta';
+    recorrencia?: RecorrenciaTipo;
+    dias_semana?: number[];
   };
   mensagem_sistema: string;
 }

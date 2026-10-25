@@ -8,6 +8,92 @@ const STORE_ALARMS = 'scheduled_alarms';
 const STORE_META = 'metadata';
 
 // ==========================================
+// 0. Recurrence Calculation Engine (Segundo Plano)
+// ==========================================
+
+function calculateNextRecurrence(dataHoraExecucao, recorrencia, diasSemana, fromTimestamp) {
+  if (!recorrencia || recorrencia === 'nenhuma') return null;
+  const baseMs = fromTimestamp !== undefined ? fromTimestamp : Date.now();
+
+  let scheduledHour = 9;
+  let scheduledMinute = 0;
+  let scheduledSecond = 0;
+
+  const rawIso = (dataHoraExecucao || '').trim().replace(' ', 'T');
+  if (rawIso.includes('T')) {
+    const timePart = rawIso.split('T')[1] || '';
+    const tParts = timePart.split(':').map((v) => parseInt(v, 10));
+    if (!isNaN(tParts[0])) scheduledHour = tParts[0];
+    if (!isNaN(tParts[1])) scheduledMinute = tParts[1];
+    if (!isNaN(tParts[2])) scheduledSecond = tParts[2];
+  } else {
+    const d = new Date(dataHoraExecucao);
+    if (!isNaN(d.getTime())) {
+      scheduledHour = d.getHours();
+      scheduledMinute = d.getMinutes();
+      scheduledSecond = d.getSeconds();
+    }
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+
+  if (recorrencia === 'diaria') {
+    const candidate = new Date(baseMs);
+    candidate.setHours(scheduledHour, scheduledMinute, scheduledSecond, 0);
+
+    if (candidate.getTime() <= baseMs) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+    while (candidate.getTime() <= baseMs) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+
+    const nextDateIso = `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}T${pad(scheduledHour)}:${pad(scheduledMinute)}:${pad(scheduledSecond)}`;
+    return {
+      nextDateIso,
+      nextTimestamp: candidate.getTime(),
+    };
+  }
+
+  if (recorrencia === 'semanal') {
+    let effectiveDays = Array.isArray(diasSemana) && diasSemana.length > 0 ? diasSemana : [];
+    if (effectiveDays.length === 0) {
+      const origDate = new Date(dataHoraExecucao);
+      effectiveDays = [!isNaN(origDate.getTime()) ? origDate.getDay() : new Date(baseMs).getDay()];
+    }
+    effectiveDays = Array.from(new Set(effectiveDays)).sort((a, b) => a - b);
+
+    const candidate = new Date(baseMs);
+    candidate.setHours(scheduledHour, scheduledMinute, scheduledSecond, 0);
+
+    const todayMatches = effectiveDays.includes(candidate.getDay());
+    if (todayMatches && candidate.getTime() > baseMs + 5000) {
+      const nextDateIso = `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}T${pad(scheduledHour)}:${pad(scheduledMinute)}:${pad(scheduledSecond)}`;
+      return {
+        nextDateIso,
+        nextTimestamp: candidate.getTime(),
+      };
+    }
+
+    for (let dayOffset = 1; dayOffset <= 14; dayOffset++) {
+      const nextCandidate = new Date(baseMs);
+      nextCandidate.setDate(nextCandidate.getDate() + dayOffset);
+      nextCandidate.setHours(scheduledHour, scheduledMinute, scheduledSecond, 0);
+
+      if (effectiveDays.includes(nextCandidate.getDay()) && nextCandidate.getTime() > baseMs) {
+        const nextDateIso = `${nextCandidate.getFullYear()}-${pad(nextCandidate.getMonth() + 1)}-${pad(nextCandidate.getDate())}T${pad(scheduledHour)}:${pad(scheduledMinute)}:${pad(scheduledSecond)}`;
+        return {
+          nextDateIso,
+          nextTimestamp: nextCandidate.getTime(),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ==========================================
 // 1. IndexedDB Helper (Persistente no Sistema)
 // ==========================================
 
@@ -104,6 +190,8 @@ async function saveAlarmsToDB(userId, reminders) {
         status_tarefa: item.status_tarefa || 'pendente',
         categoria: item.categoria || 'Geral',
         urgencia: item.urgencia || 'media',
+        recorrencia: item.recorrencia || 'nenhuma',
+        dias_semana: Array.isArray(item.dias_semana) ? item.dias_semana : [],
         execFired: isNewSchedule ? false : !!existing.execFired,
         antFired: isNewSchedule ? false : !!existing.antFired,
         updated_at: Date.now(),
@@ -118,6 +206,17 @@ async function saveAlarmsToDB(userId, reminders) {
       }
     }
 
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+}
+
+async function saveAlarmRecordInDB(record) {
+  const db = await openDatabase();
+  return new Promise((resolve) => {
+    const transaction = db.transaction([STORE_ALARMS], 'readwrite');
+    const store = transaction.objectStore(STORE_ALARMS);
+    store.put(record);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
   });
@@ -277,7 +376,62 @@ async function verifyAndTriggerDueAlarms() {
       const diffExec = now - execTime;
       if (diffExec >= 0 && diffExec < 24 * 60 * 60 * 1000) {
         await fireAlarmNotification(alarm, 'exec');
-        await markAlarmTriggeredInDB(alarm.id, 'exec');
+
+        if (alarm.recorrencia === 'diaria' || alarm.recorrencia === 'semanal') {
+          const nextOccur = calculateNextRecurrence(
+            alarm.data_hora_execucao,
+            alarm.recorrencia,
+            alarm.dias_semana,
+            now
+          );
+
+          if (nextOccur) {
+            alarm.data_hora_execucao = nextOccur.nextDateIso;
+            alarm.targetTimestamp = nextOccur.nextTimestamp;
+            const antMin = Number(alarm.antecedencia_minutos) || 0;
+            alarm.antTimestamp = antMin > 0 ? nextOccur.nextTimestamp - antMin * 60 * 1000 : null;
+            alarm.execFired = false;
+            alarm.antFired = false;
+            alarm.last_triggered = now;
+            alarm.updated_at = now;
+            await saveAlarmRecordInDB(alarm);
+
+            // Reagendar gatilho nativo no SO
+            scheduleNativeNotificationTrigger(alarm, 'exec', nextOccur.nextTimestamp).catch(() => {});
+            if (alarm.antTimestamp && alarm.antTimestamp > now) {
+              scheduleNativeNotificationTrigger(alarm, 'ant', alarm.antTimestamp).catch(() => {});
+            }
+
+            // Notificar abas abertas da aplicação
+            try {
+              const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+              for (const client of clients) {
+                client.postMessage({
+                  type: 'RECURRING_ALARM_ADVANCED',
+                  reminderId: alarm.id,
+                  nextDateIso: nextOccur.nextDateIso,
+                  nextTimestamp: nextOccur.nextTimestamp,
+                });
+              }
+            } catch (e) {}
+
+            // Sincronizar com o backend
+            try {
+              await fetch(`/api/reminders/${alarm.id}/advance`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  nextDateIso: nextOccur.nextDateIso,
+                  nextTimestamp: nextOccur.nextTimestamp,
+                }),
+              });
+            } catch (e) {}
+          } else {
+            await markAlarmTriggeredInDB(alarm.id, 'exec');
+          }
+        } else {
+          await markAlarmTriggeredInDB(alarm.id, 'exec');
+        }
       }
     }
   }
@@ -573,6 +727,73 @@ self.addEventListener('notificationclick', (event) => {
   if (action === 'complete' && reminderId) {
     event.waitUntil(
       (async () => {
+        // Consultar se o alarme concluído é recorrente
+        let existingAlarm = null;
+        try {
+          const db = await openDatabase();
+          existingAlarm = await new Promise((resolve) => {
+            const tx = db.transaction([STORE_ALARMS], 'readonly');
+            const req = tx.objectStore(STORE_ALARMS).get(reminderId);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+          });
+        } catch (e) {}
+
+        if (existingAlarm && (existingAlarm.recorrencia === 'diaria' || existingAlarm.recorrencia === 'semanal')) {
+          const nextOccur = calculateNextRecurrence(
+            existingAlarm.data_hora_execucao,
+            existingAlarm.recorrencia,
+            existingAlarm.dias_semana,
+            Date.now()
+          );
+
+          if (nextOccur) {
+            existingAlarm.data_hora_execucao = nextOccur.nextDateIso;
+            existingAlarm.targetTimestamp = nextOccur.nextTimestamp;
+            const antMin = Number(existingAlarm.antecedencia_minutos) || 0;
+            existingAlarm.antTimestamp = antMin > 0 ? nextOccur.nextTimestamp - antMin * 60 * 1000 : null;
+            existingAlarm.execFired = false;
+            existingAlarm.antFired = false;
+            existingAlarm.updated_at = Date.now();
+            await saveAlarmRecordInDB(existingAlarm);
+
+            scheduleNativeNotificationTrigger(existingAlarm, 'exec', nextOccur.nextTimestamp).catch(() => {});
+            if (existingAlarm.antTimestamp && existingAlarm.antTimestamp > Date.now()) {
+              scheduleNativeNotificationTrigger(existingAlarm, 'ant', existingAlarm.antTimestamp).catch(() => {});
+            }
+
+            try {
+              await fetch(`/api/reminders/${reminderId}/advance`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  nextDateIso: nextOccur.nextDateIso,
+                  nextTimestamp: nextOccur.nextTimestamp,
+                }),
+              });
+            } catch (e) {}
+
+            const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+            for (const client of clientList) {
+              client.postMessage({
+                type: 'RECURRING_ALARM_ADVANCED',
+                reminderId: reminderId,
+                nextDateIso: nextOccur.nextDateIso,
+                nextTimestamp: nextOccur.nextTimestamp,
+              });
+            }
+
+            await self.registration.showNotification('✅ Tarefa Recorrente Concluída', {
+              body: `Próximo alarme agendado automaticamente.`,
+              icon: '/icon-192.png',
+              tag: 'recurring_done_' + reminderId,
+              silent: true,
+            });
+            return;
+          }
+        }
+
+        // Se for lembrete único, remove do IndexedDB e marca concluído
         await markAlarmCompletedInDB(reminderId);
 
         try {

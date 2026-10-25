@@ -94,6 +94,7 @@ async function safeFetchJson<T = any>(
 
 type AlarmTriggerCallback = (reminderId?: string) => void;
 type SnoozeCallback = (reminderId?: string) => void;
+export type RecurringAdvancedCallback = (data: { reminderId: string; nextDateIso: string; nextTimestamp: number }) => void;
 
 export interface SystemNotificationOptions extends NotificationOptions {
   vibrate?: number | number[];
@@ -108,6 +109,7 @@ class PushManagerService {
   private registration: ServiceWorkerRegistration | null = null;
   private alarmListeners: Set<AlarmTriggerCallback> = new Set();
   private snoozeListeners: Set<SnoozeCallback> = new Set();
+  private recurringAdvancedListeners: Set<RecurringAdvancedCallback> = new Set();
   private isInitializing = false;
 
   constructor() {
@@ -156,6 +158,9 @@ class PushManagerService {
         } else if (event.data.type === 'ALARM_SNOOZED') {
           console.log('[PushManager] Sinal de alarme adiado recebido do Service Worker:', event.data);
           this.snoozeListeners.forEach((cb) => cb(event.data.reminderId));
+        } else if (event.data.type === 'RECURRING_ALARM_ADVANCED') {
+          console.log('[PushManager] Sinal de alarme recorrente avançado recebido:', event.data);
+          this.recurringAdvancedListeners.forEach((cb) => cb(event.data));
         }
       });
 
@@ -550,6 +555,13 @@ class PushManagerService {
     this.snoozeListeners.add(callback);
     return () => {
       this.snoozeListeners.delete(callback);
+    };
+  }
+
+  public onRecurringAlarmAdvanced(callback: RecurringAdvancedCallback): () => void {
+    this.recurringAdvancedListeners.add(callback);
+    return () => {
+      this.recurringAdvancedListeners.delete(callback);
     };
   }
 
