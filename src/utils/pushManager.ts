@@ -142,12 +142,18 @@ class PushManagerService {
         if ('periodicSync' in reg) {
           const status = await (navigator as any).permissions?.query?.({ name: 'periodic-background-sync' });
           if (!status || status.state === 'granted') {
+            await (reg as any).periodicSync.register('sync-pending-reminders', {
+              minInterval: 60 * 1000,
+            });
             await (reg as any).periodicSync.register('check-alarms', {
               minInterval: 60 * 1000,
             });
+            console.log('[PushManager] PeriodicSyncManager registrado com tags sync-pending-reminders e check-alarms');
           }
         }
-      } catch {}
+      } catch (periodicErr) {
+        console.warn('[PushManager] PeriodicSyncManager aviso:', periodicErr);
+      }
 
       // Listen for background push message signals from service worker
       navigator.serviceWorker.addEventListener('message', (event) => {

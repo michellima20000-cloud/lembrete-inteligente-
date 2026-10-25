@@ -236,6 +236,11 @@ async function saveAlarmsToDB(userId, reminders) {
       await scheduleNativeNotificationTrigger(t.record, t.type, t.timestamp);
     } catch {}
   }
+
+  // 3. Registrar ou renovar agendamento no PeriodicSyncManager para lembretes pendentes
+  try {
+    await registerPeriodicSyncForPendingReminders();
+  } catch {}
 }
 
 async function saveAlarmRecordInDB(record) {
@@ -538,6 +543,61 @@ async function fireAlarmNotification(alarm, type) {
 // 4. Ciclo de Vida do Service Worker
 // ==========================================
 
+// ==========================================
+// 4. PeriodicSyncManager & Ciclo de Vida do Service Worker
+// ==========================================
+
+async function registerPeriodicSyncManager(tag = 'sync-pending-reminders', minInterval = 60 * 1000) {
+  try {
+    if (!('periodicSync' in self.registration)) {
+      console.log('[PeriodicSyncManager] periodicSync não suportado nesta plataforma.');
+      return false;
+    }
+
+    // Consultar permissão se a Permissions API estiver disponível no Worker
+    if (self.navigator && self.navigator.permissions && typeof self.navigator.permissions.query === 'function') {
+      try {
+        const perm = await self.navigator.permissions.query({ name: 'periodic-background-sync' });
+        if (perm && perm.state === 'denied') {
+          console.warn('[PeriodicSyncManager] Permissão periodic-background-sync negada pelo navegador.');
+          return false;
+        }
+      } catch (permErr) {
+        // Ignora navegadores que não listam periodic-background-sync em permissions.query
+      }
+    }
+
+    const periodicSync = self.registration.periodicSync;
+    const existingTags = await periodicSync.getTags();
+
+    if (!existingTags.includes(tag)) {
+      await periodicSync.register(tag, {
+        minInterval: minInterval,
+      });
+      console.log(`[PeriodicSyncManager] Tarefa '${tag}' registrada com sucesso (minInterval: ${minInterval}ms).`);
+    } else {
+      console.log(`[PeriodicSyncManager] Tarefa '${tag}' já registrada no Service Worker.`);
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[PeriodicSyncManager] Erro ao registrar tag '${tag}':`, err);
+    return false;
+  }
+}
+
+async function registerPeriodicSyncForPendingReminders() {
+  try {
+    const pending = await getAllPendingAlarmsFromDB();
+    if (pending && pending.length > 0) {
+      // Registra a sincronização de lembretes pendentes e a checagem de alarmes
+      await registerPeriodicSyncManager('sync-pending-reminders', 60 * 1000);
+      await registerPeriodicSyncManager('check-alarms', 60 * 1000);
+    }
+  } catch (e) {
+    console.warn('[PeriodicSyncManager] Erro ao verificar lembretes pendentes para agendamento:', e);
+  }
+}
+
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
@@ -548,22 +608,14 @@ self.addEventListener('activate', (event) => {
       await self.clients.claim();
       await verifyAndTriggerDueAlarms();
 
-      // Registro do Periodic Background Sync para acordar em segundo plano
-      try {
-        if ('periodicSync' in self.registration) {
-          const status = await self.navigator.permissions?.query?.({ name: 'periodic-background-sync' });
-          if (!status || status.state === 'granted') {
-            await self.registration.periodicSync.register('check-alarms', {
-              minInterval: 60 * 1000, // 1 minuto
-            });
-          }
-        }
-      } catch (e) {}
+      // Registro da PeriodicSyncManager para agendar sincronização em segundo plano
+      await registerPeriodicSyncForPendingReminders();
 
       // Registro do Background Sync imediato
       try {
         if ('sync' in self.registration) {
           await self.registration.sync.register('check-alarms');
+          await self.registration.sync.register('sync-pending-reminders');
         }
       } catch (e) {}
     })()
@@ -588,15 +640,30 @@ function startKeepAliveTick() {
 startKeepAliveTick();
 
 // ==========================================
-// 5. Background Sync & Periodic Sync Events
+// 5. Background Sync & PeriodicSyncManager Events
 // ==========================================
 
 self.addEventListener('sync', (event) => {
+  console.log(`[SW-Custom] Evento sync recebido: ${event.tag}`);
   event.waitUntil(verifyAndTriggerDueAlarms());
 });
 
 self.addEventListener('periodicsync', (event) => {
-  event.waitUntil(verifyAndTriggerDueAlarms());
+  console.log(`[SW-Custom] Evento periodicsync recebido do PeriodicSyncManager: ${event.tag}`);
+  event.waitUntil(
+    (async () => {
+      // 1. Disparar alarmes e lembretes pendentes vencidos
+      await verifyAndTriggerDueAlarms();
+
+      // 2. Conectar com o servidor para sincronizar estado na nuvem
+      try {
+        await fetch('/api/ping', { method: 'GET', cache: 'no-store' });
+      } catch {}
+
+      // 3. Garantir que as tarefas do PeriodicSyncManager continuem registradas
+      await registerPeriodicSyncForPendingReminders();
+    })()
+  );
 });
 
 // ==========================================
@@ -644,6 +711,8 @@ self.addEventListener('message', (event) => {
         vibrate: [600, 200, 600, 200, 600, 200, 800],
       })
     );
+  } else if (type === 'REGISTER_PERIODIC_SYNC') {
+    event.waitUntil(registerPeriodicSyncForPendingReminders());
   } else if (type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
