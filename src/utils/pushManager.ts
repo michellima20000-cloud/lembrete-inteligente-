@@ -6,7 +6,7 @@ export const FALLBACK_VAPID_PUBLIC_KEY =
   'BB9hiMXS2NLqKR7r8LR44b1lB1BEnB_l3iphQ0XQQf-7lPUzBAC-4vaOfrvIvybpbsAORqd4S7EeZ0Tw8KVlPZg';
 
 
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+export function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);

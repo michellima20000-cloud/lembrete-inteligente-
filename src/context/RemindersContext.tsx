@@ -5,7 +5,7 @@ import { soundAlert } from '../utils/audioAlert';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { parseReminderCommand } from '../utils/reminderParser';
-import { pushManager } from '../utils/pushManager';
+import { pushManager, urlBase64ToUint8Array } from '../utils/pushManager';
 
 interface RemindersContextType {
   reminders: Lembrete[];
@@ -263,16 +263,58 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const subscribePush = async () => {
-    if (!currentUser?.id) {
-      return { success: false, message: 'Usuário não autenticado.' };
-    }
-    const res = await pushManager.subscribeToPush(currentUser.id);
-    if (res.success) {
+    if (!currentUser?.id) return { success: false, message: 'Usuário não logado.' };
+    
+    try {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
+        const perm = await Notification.requestPermission();
+        setNotificationPermission(perm);
+        if (perm !== 'granted') {
+          return { success: false, message: 'Permissão de notificação negada no navegador.' };
+        }
+      }
+
+      if ('serviceWorker' in navigator) {
+        await navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+      }
+
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      
+      if (!sub) {
+        const resPublic = await fetch('/api/push/vapid-public-key');
+        const keyData = await resPublic.json();
+        
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyData.publicKey) as unknown as BufferSource,
+        });
+      }
+
+      // Registra a assinatura na rota estável do servidor
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUser.id,
+          subscription: sub.toJSON()
+        })
+      });
+
+      // Envia os lembretes locais para o servidor monitorar na nuvem
+      await fetch('/api/reminders/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, lembretes: reminders })
+      });
+
       setIsPushSubscribed(true);
       setNotificationPermission('granted');
-      pushManager.syncReminders(currentUser.id, reminders);
+      return { success: true, message: 'Inscrição realizada!' };
+    } catch (err: any) {
+      console.error('Falha ao registrar push:', err);
+      return { success: false, message: err?.message || 'Falha ao registrar push.' };
     }
-    return res;
   };
 
   const testPushNotification = async () => {
