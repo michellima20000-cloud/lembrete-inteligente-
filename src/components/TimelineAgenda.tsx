@@ -38,8 +38,8 @@ export const TimelineAgenda: React.FC = () => {
   useEffect(() => {
     const updateTick = () => setCurrentTimeMs(Date.now());
 
-    // Update every 5 seconds so minute count automatically steps down live
-    const interval = setInterval(updateTick, 5000);
+    // Update every 30 seconds so minute countdown stays fresh without draining CPU
+    const interval = setInterval(updateTick, 30000);
 
     // When phone is unlocked or user switches back to browser, update immediately
     const handleVisibility = () => {

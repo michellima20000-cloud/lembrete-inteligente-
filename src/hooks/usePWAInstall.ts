@@ -21,7 +21,7 @@ export function usePWAInstall() {
       document.referrer.includes('android-app://');
     setIsInstalled(isStandalone);
 
-    // Detect device platform
+    // Detect device platform & environment
     const userAgent = window.navigator.userAgent.toLowerCase();
     setIsIOS(/iphone|ipad|ipod/.test(userAgent));
     setIsAndroid(/android/.test(userAgent));
@@ -73,11 +73,16 @@ export function usePWAInstall() {
     return false;
   };
 
+  const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+  const isMobile = isIOS || isAndroid || (typeof window !== 'undefined' && window.innerWidth <= 768);
+
   return {
     isInstallable: !!(deferredPrompt || (window as any)?.__pwaInstallPrompt),
     isInstalled,
     isIOS,
     isAndroid,
+    isMobile,
+    isInIframe,
     install,
   };
 }

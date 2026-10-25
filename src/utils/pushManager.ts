@@ -683,13 +683,23 @@ class PushManagerService {
       }
     } catch {}
 
-    // Broadcast status to UI subscribers
-    this.pingListeners.forEach((cb) => {
-      try { cb(this.lastPingStatus); } catch {}
-    });
+    // Broadcast status to UI subscribers ONLY if meaningful status changed or first notify
+    const statusChanged =
+      !this.previousBroadcastStatus ||
+      this.previousBroadcastStatus.online !== this.lastPingStatus.online ||
+      this.previousBroadcastStatus.pendingReminders !== this.lastPingStatus.pendingReminders;
+
+    if (statusChanged) {
+      this.previousBroadcastStatus = { ...this.lastPingStatus };
+      this.pingListeners.forEach((cb) => {
+        try { cb(this.lastPingStatus); } catch {}
+      });
+    }
 
     return this.lastPingStatus;
   }
+
+  private previousBroadcastStatus: { online: boolean; pendingReminders: number } | null = null;
 
   public startRealtimeBackgroundPing(userId?: string) {
     if (userId) {
@@ -703,10 +713,10 @@ class PushManagerService {
       clearInterval(this.pingInterval);
     }
 
-    // Ticks every 8 seconds to keep server & cloud container alive and alarms hot
+    // Ticks every 30 seconds to keep server & cloud container alive and alarms hot without draining mobile resources
     this.pingInterval = setInterval(() => {
       this.sendPing(this.currentPingUserId || undefined).catch(() => {});
-    }, 8000);
+    }, 30000);
 
     // Keep connection active and instant re-ping when user switches tabs or locks/unlocks
     if (typeof document !== 'undefined') {

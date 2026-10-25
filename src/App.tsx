@@ -9,6 +9,7 @@ import { ManualAddModal } from './components/ManualAddModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LoginScreen } from './components/LoginScreen';
 import { PushNotificationBanner } from './components/PushNotificationBanner';
+import { MobilePWAInstallBanner } from './components/MobilePWAInstallBanner';
 
 function MainApp() {
   const { isAuthenticated, isAuthReady } = useUser();
@@ -40,6 +41,9 @@ function MainApp() {
 
       {/* Main Container */}
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-4 sm:py-6 space-y-4">
+        {/* PWA Mobile Installation Banner */}
+        <MobilePWAInstallBanner />
+
         {/* Push Notifications Activation / Status Banner */}
         <PushNotificationBanner />
 

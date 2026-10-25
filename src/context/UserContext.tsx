@@ -102,14 +102,12 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } catch {}
 
-          // Save user profile to Firestore cloud
-          try {
-            await setDoc(doc(db, 'users', user.uid), profile, { merge: true });
-          } catch (e) {
+          // Save user profile to Firestore cloud asynchronously without blocking boot
+          setDoc(doc(db, 'users', user.uid), profile, { merge: true }).catch((e) => {
             handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
-          }
+          });
 
-          // Register in backend
+          // Register in backend asynchronously
           fetch('/api/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
