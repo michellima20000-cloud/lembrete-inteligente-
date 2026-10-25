@@ -1151,6 +1151,12 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
   const clientOffset = getClientOffset(req, user_id);
   userTimezoneOffsets.set(user_id, clientOffset);
 
+  // If client sent an empty list during initial mount but server already has active reminders, preserve them
+  const existingReminders = userLembretes.get(user_id) || [];
+  if (lembretes.length === 0 && existingReminders.length > 0 && !req.body?.forceClear) {
+    return res.json({ status: 'sucesso', count: existingReminders.length, preserved: true });
+  }
+
   // Ensure timestamps are consistently computed on every synced reminder
   const processedReminders = (lembretes as Lembrete[]).map((r) => {
     const ts = resolveReminderExecutionTimestamp(r, clientOffset);
@@ -1253,8 +1259,9 @@ async function sendBackgroundPushNotification(
     url: `/?alarm_reminder_id=${reminder.id}`,
     isAntecedencia,
     actions: [
-      { action: 'open', title: 'Abrir Lembrete' },
-      { action: 'dismiss', title: 'Silenciar' },
+      { action: 'open', title: '📂 Abrir Agenda' },
+      { action: 'snooze', title: '⏰ Adiar 10m' },
+      { action: 'complete', title: '✅ Concluir' },
     ],
   });
 
@@ -1324,30 +1331,30 @@ setInterval(async () => {
 
         const antMin = Number(reminder.antecedencia_minutos) || 0;
 
-        // 1. Antecedência notification (if configured and due within last 5 minutes)
+        // 1. Antecedência notification (if configured and due within last 30 minutes)
         if (antMin > 0) {
           const antecedenciaTime = execTime - antMin * 60 * 1000;
           const diffAnt = now - antecedenciaTime;
           const antKey = `ant_${reminder.id}_${antMin}_${reminder.data_hora_execucao}`;
 
           if (diffAnt >= 0) {
-            if (diffAnt < 5 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+            if (diffAnt < 30 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
               serverTriggeredReminders.add(antKey);
               saveCache();
               await sendBackgroundPushNotification(reminder, userId, subscriptions, true);
-            } else if (diffAnt >= 5 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
+            } else if (diffAnt >= 30 * 60 * 1000 && !serverTriggeredReminders.has(antKey)) {
               // Mark old historical antecedência as triggered to prevent stale notification
               serverTriggeredReminders.add(antKey);
             }
           }
         }
 
-        // 2. Exact Execution Time alarm (when time arrives or within last 5 minutes)
+        // 2. Exact Execution Time alarm (when time arrives or within last 30 minutes)
         const diffExec = now - execTime;
         const execKey = `exec_${reminder.id}_${reminder.data_hora_execucao}`;
 
         if (diffExec >= 0) {
-          if (diffExec < 5 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+          if (diffExec < 30 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
             serverTriggeredReminders.add(execKey);
             saveCache();
             await sendBackgroundPushNotification(reminder, userId, subscriptions, false);
@@ -1375,11 +1382,12 @@ setInterval(async () => {
                 console.log(`[Server Background Runner] Lembrete recorrente "${reminder.titulo}" avançado para ${nextOccur.nextDateIso}`);
               }
             }
-          } else if (diffExec >= 5 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
+          } else if (diffExec >= 30 * 60 * 1000 && !serverTriggeredReminders.has(execKey)) {
             // Mark old historical execution as triggered on boot/reconnect to prevent noise
             serverTriggeredReminders.add(execKey);
           }
         }
+
       }
     }
   } catch (schedulerErr) {

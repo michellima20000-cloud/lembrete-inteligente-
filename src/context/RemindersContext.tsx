@@ -302,10 +302,11 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
 
       // Envia os lembretes locais para o servidor monitorar na nuvem
+      const currentReminders = reminders && reminders.length > 0 ? reminders : loadLocalPartition(currentUser.id);
       await fetch('/api/reminders/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id, lembretes: reminders })
+        body: JSON.stringify({ user_id: currentUser.id, lembretes: currentReminders })
       });
 
       setIsPushSubscribed(true);
