@@ -857,19 +857,21 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           adiado_vezes: 0,
         };
 
-        syncItemToFirestore(fullItem);
+        // 1. Calculate new updated list immediately
+        const currentList = loadLocalPartition(effectiveUserId);
+        const updated = [...currentList.filter((i) => i.id !== fullItem.id), fullItem];
+        updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
 
-        // Update local state immediately so UI responds with 0ms delay
-        setReminders((prev) => {
-          const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
-          updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-          saveLocalPartition(effectiveUserId, updated);
-          if (currentUser?.id && currentUser.id !== effectiveUserId) {
-            saveLocalPartition(currentUser.id, updated);
-          }
-          pushManager.syncReminders(effectiveUserId, updated);
-          return updated;
-        });
+        // 2. Immediately persist to localStorage and sync to Service Worker's IndexedDB / OS TimestampTrigger
+        saveLocalPartition(effectiveUserId, updated);
+        if (currentUser?.id && currentUser.id !== effectiveUserId) {
+          saveLocalPartition(currentUser.id, updated);
+        }
+        pushManager.syncReminders(effectiveUserId, updated);
+        setReminders(updated);
+
+        // 3. Realtime cloud backup to Firestore
+        syncItemToFirestore(fullItem);
 
         // Trigger notification permission dialog on user gesture if not yet granted
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -914,34 +916,34 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       adiado_vezes: 0,
     };
 
-    // 1. Instantly update UI and localStorage
-    setReminders((prev) => {
-      const updated = [...prev.filter((i) => i.id !== fullItem.id), fullItem];
-      updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
-      saveLocalPartition(currentUser.id, updated);
-      pushManager.syncReminders(currentUser.id, updated);
-      return updated;
-    });
+    // 1. Calculate new updated list immediately
+    const currentList = loadLocalPartition(currentUser.id);
+    const updated = [...currentList.filter((i) => i.id !== fullItem.id), fullItem];
+    updated.sort((a, b) => new Date(a.data_hora_execucao).getTime() - new Date(b.data_hora_execucao).getTime());
 
-    // 2. Realtime sync to Firestore
+    // 2. Immediately persist to localStorage and sync to Service Worker's IndexedDB / OS TimestampTrigger
+    saveLocalPartition(currentUser.id, updated);
+    pushManager.syncReminders(currentUser.id, updated);
+    setReminders(updated);
+
+    // 3. Realtime cloud backup to Firestore
     syncItemToFirestore(fullItem);
     soundAlert.playSuccess();
 
-    // 3. Trigger notification permission dialog on user gesture if not yet granted
+    // 4. Trigger notification permission dialog on user gesture if not yet granted
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       requestNotificationPermission().catch(() => {});
     }
 
-    // 4. Notify backend API and refresh safely without wiping in-memory state
+    // 5. Notify backend API asynchronously without blocking client
     try {
-      await fetch('/api/reminders', {
+      fetch('/api/reminders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullItem),
-      });
-      await fetchReminders().catch(() => {});
+      }).then(() => fetchReminders()).catch(() => {});
     } catch (e) {
-      // Backend not running (e.g. static hosting on Vercel)
+      // Backend not running (e.g. serverless on Vercel)
     }
   };
 

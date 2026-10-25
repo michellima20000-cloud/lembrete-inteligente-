@@ -527,39 +527,49 @@ class PushManagerService {
   }
 
   public async syncReminders(userId: string, lembretes: any[]): Promise<void> {
-    // 1. Post to active Service Worker for IndexedDB persistence and native OS NotificationTriggers
+    if (typeof window === 'undefined') return;
+
+    const payload = {
+      type: 'SCHEDULE_REMINDERS',
+      userId,
+      reminders: Array.isArray(lembretes) ? lembretes : [],
+    };
+
+    // 1. Immediate parallel dispatch to active Service Worker for instant local OS alarm scheduling
     try {
-      if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-        const reg = await (this.registration || navigator.serviceWorker.ready);
-        const target = reg?.active || navigator.serviceWorker.controller;
-        if (target) {
-          target.postMessage({
-            type: 'SCHEDULE_REMINDERS',
-            userId,
-            reminders: lembretes,
-          });
+      if ('serviceWorker' in navigator) {
+        // Immediate dispatch if controller is active (0ms latency)
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage(payload);
         }
+
+        // Parallel dispatch to active registration
+        if (this.registration?.active && this.registration.active !== navigator.serviceWorker.controller) {
+          this.registration.active.postMessage(payload);
+        }
+
+        // Fallback through navigator.serviceWorker.ready
+        navigator.serviceWorker.ready.then((reg) => {
+          if (reg?.active) {
+            reg.active.postMessage(payload);
+          }
+        }).catch(() => {});
       }
     } catch (e) {
       console.warn('[PushManager] Falha ao despachar SCHEDULE_REMINDERS para Service Worker:', e);
     }
 
-    // 2. Sync with backend server
+    // 2. Non-blocking cloud/server sync (for persistence on Vercel / Cloud backup)
     try {
       const clientOffset = new Date().getTimezoneOffset();
-      const res = await safeFetchJson('/api/reminders/sync', {
+      safeFetchJson('/api/reminders/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-timezone-offset': String(clientOffset),
         },
         body: JSON.stringify({ user_id: userId, lembretes, timezone_offset_minutes: clientOffset }),
-      });
-      if (!res.ok) {
-        await safeFetchJson(
-          `/api/reminders/sync?user_id=${encodeURIComponent(userId)}&timezone_offset_minutes=${clientOffset}&lembretes=${encodeURIComponent(JSON.stringify(lembretes))}`
-        );
-      }
+      }).catch(() => {});
     } catch {
       // Non-blocking sync
     }

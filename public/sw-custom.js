@@ -131,6 +131,22 @@ async function getAllPendingAlarmsFromDB() {
   });
 }
 
+async function cancelScheduledNotificationByTag(tag) {
+  try {
+    let notifs = [];
+    try {
+      notifs = await self.registration.getNotifications({ tag, includeTriggered: true });
+    } catch {
+      notifs = await self.registration.getNotifications({ tag });
+    }
+    if (Array.isArray(notifs)) {
+      notifs.forEach((n) => {
+        try { n.close(); } catch {}
+      });
+    }
+  } catch {}
+}
+
 async function saveAlarmsToDB(userId, reminders) {
   if (!Array.isArray(reminders)) return;
   const db = await openDatabase();
@@ -141,29 +157,31 @@ async function saveAlarmsToDB(userId, reminders) {
   }
 
   const incomingIds = new Set(reminders.map((r) => r.id));
+  const triggersToSchedule = [];
 
-  return new Promise((resolve) => {
+  // 1. Prune removed or finished reminders
+  for (const [id, existingRec] of existingMap.entries()) {
+    if ((existingRec.user_id === userId || !userId) && !incomingIds.has(id)) {
+      await cancelScheduledNotificationByTag(`${id}_exec`);
+      await cancelScheduledNotificationByTag(`${id}_ant`);
+    }
+  }
+
+  await new Promise((resolve) => {
     const transaction = db.transaction([STORE_ALARMS], 'readwrite');
     const store = transaction.objectStore(STORE_ALARMS);
 
-    // Prune any alarms previously stored for this user that are no longer in the incoming list
     for (const [id, existingRec] of existingMap.entries()) {
       if ((existingRec.user_id === userId || !userId) && !incomingIds.has(id)) {
         store.delete(id);
-        try {
-          self.registration.getNotifications({ tag: `${id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-          self.registration.getNotifications({ tag: `${id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-        } catch {}
       }
     }
 
     for (const item of reminders) {
       if (item.status_tarefa === 'concluído') {
         store.delete(item.id);
-        try {
-          self.registration.getNotifications({ tag: `${item.id}_exec` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-          self.registration.getNotifications({ tag: `${item.id}_ant` }).then((notifs) => notifs.forEach((n) => n.close())).catch(() => {});
-        } catch {}
+        cancelScheduledNotificationByTag(`${item.id}_exec`);
+        cancelScheduledNotificationByTag(`${item.id}_ant`);
         continue;
       }
 
@@ -199,16 +217,25 @@ async function saveAlarmsToDB(userId, reminders) {
 
       store.put(record);
 
-      // Agendar gatilho nativo no SO (NotificationTriggers) se suportado pelo navegador
-      scheduleNativeNotificationTrigger(record, 'exec', targetTimestamp).catch(() => {});
-      if (antTimestamp && antTimestamp > Date.now()) {
-        scheduleNativeNotificationTrigger(record, 'ant', antTimestamp).catch(() => {});
+      // Programar gatilhos nativos de alta prioridade diretamente no relógio do sistema operacional
+      if (targetTimestamp > Date.now() && !record.execFired) {
+        triggersToSchedule.push({ record, type: 'exec', timestamp: targetTimestamp });
+      }
+      if (antTimestamp && antTimestamp > Date.now() && !record.antFired) {
+        triggersToSchedule.push({ record, type: 'ant', timestamp: antTimestamp });
       }
     }
 
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
   });
+
+  // 2. Registrar cada alarme no chip do SO via NotificationTriggers (independente de servidor ou Vercel)
+  for (const t of triggersToSchedule) {
+    try {
+      await scheduleNativeNotificationTrigger(t.record, t.type, t.timestamp);
+    } catch {}
+  }
 }
 
 async function saveAlarmRecordInDB(record) {
@@ -244,11 +271,12 @@ async function markAlarmTriggeredInDB(id, type) {
 
 async function updateAlarmSnoozeInDB(id, newTargetTimestamp) {
   const db = await openDatabase();
+  await cancelScheduledNotificationByTag(`${id}_exec`);
   return new Promise((resolve) => {
     const transaction = db.transaction([STORE_ALARMS], 'readwrite');
     const store = transaction.objectStore(STORE_ALARMS);
     const getReq = store.get(id);
-    getReq.onsuccess = () => {
+    getReq.onsuccess = async () => {
       const record = getReq.result;
       if (record) {
         record.targetTimestamp = newTargetTimestamp;
@@ -257,8 +285,8 @@ async function updateAlarmSnoozeInDB(id, newTargetTimestamp) {
         record.updated_at = Date.now();
         store.put(record);
 
-        // Reagendar gatilho nativo
-        scheduleNativeNotificationTrigger(record, 'exec', newTargetTimestamp).catch(() => {});
+        // Reagendar gatilho nativo no SO
+        await scheduleNativeNotificationTrigger(record, 'exec', newTargetTimestamp);
       }
       resolve();
     };
@@ -268,6 +296,8 @@ async function updateAlarmSnoozeInDB(id, newTargetTimestamp) {
 
 async function markAlarmCompletedInDB(id) {
   const db = await openDatabase();
+  await cancelScheduledNotificationByTag(`${id}_exec`);
+  await cancelScheduledNotificationByTag(`${id}_ant`);
   return new Promise((resolve) => {
     const transaction = db.transaction([STORE_ALARMS], 'readwrite');
     const store = transaction.objectStore(STORE_ALARMS);
@@ -278,13 +308,23 @@ async function markAlarmCompletedInDB(id) {
 }
 
 // ==========================================
-// 2. Suporte a NotificationTriggers (Native OS Alarm)
+// 2. Suporte a NotificationTriggers (Native OS Alarm Chip)
 // ==========================================
+
+function getTimestampTriggerConstructor() {
+  if (typeof self !== 'undefined' && typeof self.TimestampTrigger !== 'undefined') {
+    return self.TimestampTrigger;
+  }
+  if (typeof globalThis !== 'undefined' && typeof globalThis.TimestampTrigger !== 'undefined') {
+    return globalThis.TimestampTrigger;
+  }
+  return null;
+}
 
 function supportsNotificationTriggers() {
   try {
     return (
-      typeof self.TimestampTrigger !== 'undefined' ||
+      getTimestampTriggerConstructor() !== null ||
       ('showTrigger' in (self.Notification && self.Notification.prototype ? self.Notification.prototype : {}))
     );
   } catch (e) {
@@ -302,12 +342,15 @@ async function scheduleNativeNotificationTrigger(item, type, triggerTimestamp) {
     : `⏰ ALARME: ${item.titulo}`;
   const body = isAntecedencia
     ? `Aviso prévio (${item.antecedencia_minutos} min antes) para: ${item.titulo}`
-    : `Horário do compromisso alcançado: ${item.titulo}!`;
+    : `Horário do compromisso alcançado: ${item.titulo}! Toque para ver ou adiar.`;
 
   const tag = `${item.id}_${type}`;
 
   try {
-    const trigger = new self.TimestampTrigger(triggerTimestamp);
+    const TriggerCtor = getTimestampTriggerConstructor();
+    if (!TriggerCtor) return false;
+
+    const trigger = new TriggerCtor(triggerTimestamp);
     await self.registration.showNotification(title, {
       body: body,
       icon: '/icon-192.png',
@@ -317,26 +360,26 @@ async function scheduleNativeNotificationTrigger(item, type, triggerTimestamp) {
       requireInteraction: true,
       renotify: true,
       silent: false,
-      vibrate: [600, 200, 600, 200, 600, 200, 800],
+      vibrate: [1000, 300, 1000, 300, 1000, 300, 1500],
       data: {
         reminderId: item.id,
         triggerType: type,
         url: `/?alarm_reminder_id=${item.id}`,
       },
       actions: [
-        { action: 'open', title: 'Ver Lembrete' },
-        { action: 'snooze', title: 'Adiar 10m' },
-        { action: 'complete', title: 'Concluir' },
+        { action: 'open', title: '🔔 Abrir Alarme' },
+        { action: 'snooze', title: '⏰ Adiar 10m' },
+        { action: 'complete', title: '✅ Concluir' },
       ],
     });
     console.log(
-      `[SW-Custom] NotificationTrigger nativo registrado para "${item.titulo}" (${type}) às ${new Date(
+      `[SW-Custom] 🚀 NotificationTrigger nativo registrado no relógio do SO para "${item.titulo}" (${type}) às ${new Date(
         triggerTimestamp
       ).toLocaleTimeString()}`
     );
     return true;
   } catch (err) {
-    console.warn('[SW-Custom] Aviso ao agendar TimestampTrigger:', err);
+    console.warn('[SW-Custom] Aviso ao agendar TimestampTrigger nativo:', err);
     return false;
   }
 }
