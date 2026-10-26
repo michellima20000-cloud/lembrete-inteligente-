@@ -520,6 +520,15 @@ app.get('/api/reminders', (req: Request, res: Response) => {
 
 // API: Save Reminder for authenticated user
 app.post('/api/reminders', (req: Request, res: Response) => {
+  let bodyData: any = req.body;
+  if (typeof bodyData === 'string') {
+    try {
+      bodyData = JSON.parse(bodyData);
+    } catch {
+      bodyData = {};
+    }
+  }
+
   const {
     id,
     user_id,
@@ -530,7 +539,7 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     urgencia,
     timestamp_execucao,
     timezone_offset_minutes,
-  } = req.body;
+  } = bodyData || {};
 
   if (!user_id || !titulo || !data_hora_execucao) {
     return res.status(400).json({
@@ -556,9 +565,9 @@ app.post('/api/reminders', (req: Request, res: Response) => {
     status_tarefa: 'pendente',
     categoria: categoria || 'Geral',
     urgencia: urgencia || 'media',
-    recorrencia: req.body.recorrencia || 'nenhuma',
-    dias_semana: Array.isArray(req.body.dias_semana) ? req.body.dias_semana : [],
-    criado_em: req.body.criado_em || new Date().toISOString(),
+    recorrencia: bodyData.recorrencia || 'nenhuma',
+    dias_semana: Array.isArray(bodyData.dias_semana) ? bodyData.dias_semana : [],
+    criado_em: bodyData.criado_em || new Date().toISOString(),
     adiado_vezes: 0,
   };
 
@@ -574,11 +583,13 @@ app.post('/api/reminders', (req: Request, res: Response) => {
   userLembretes.set(user_id, list);
   saveCache();
 
+  console.log(`[Alarme Armado] "${newReminder.titulo}" agendado para ${newReminder.data_hora_execucao} (Timestamp: ${newReminder.timestamp_execucao}). Disparo automático ativo.`);
+
   res.json({
     status: 'sucesso',
     user_id: user_id,
     lembrete: newReminder,
-    mensagem_sistema: 'Lembrete agendado com sucesso e isolado para o perfil do usuário.',
+    mensagem_sistema: 'Lembrete agendado com sucesso e alarme armado para disparo automático.',
   });
 });
 
@@ -1207,8 +1218,17 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
-  let user_id = req.body?.user_id || (req.query.user_id as string);
-  let lembretes = req.body?.lembretes;
+  let bodyData: any = req.body;
+  if (typeof bodyData === 'string') {
+    try {
+      bodyData = JSON.parse(bodyData);
+    } catch {
+      bodyData = {};
+    }
+  }
+
+  let user_id = bodyData?.user_id || (req.query.user_id as string) || (req.headers['x-user-id'] as string);
+  let lembretes = bodyData?.lembretes;
 
   if (!lembretes && req.query.lembretes) {
     try {
@@ -1468,7 +1488,7 @@ setInterval(async () => {
   } catch (schedulerErr) {
     console.error('[Server Background Runner] Erro no ciclo de verificação:', schedulerErr);
   }
-}, 2000);
+}, 1000);
 
 // Setup Vite middlewares in development or static serve in production
 async function startServer() {

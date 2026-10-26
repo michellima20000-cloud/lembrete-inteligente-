@@ -796,6 +796,6 @@ export function parseReminderCommand(params: ParseReminderInput): ParseReminderR
       recorrencia: recorrencia !== 'nenhuma' ? recorrencia : undefined,
       dias_semana: diasSemanaRecorrencia.length > 0 ? diasSemanaRecorrencia : undefined,
     },
-    mensagem_sistema: `Lembrete "${cleanedTitle}" agendado para ${dayDesc} às ${formattedHour} (${periodLabel})${recurrenceNotice}!`,
+    mensagem_sistema: `⏰ Alarme armado: "${cleanedTitle}" agendado para ${dayDesc} às ${formattedHour} (${periodLabel})${recurrenceNotice}! Disparo automático ativo com som e vibração.`,
   };
 }
