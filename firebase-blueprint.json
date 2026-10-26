@@ -74,6 +74,16 @@
         "adiado_vezes": {
           "type": "number",
           "description": "Count of times postponed"
+        },
+        "recorrencia": {
+          "type": "string",
+          "enum": ["nenhuma", "diaria", "semanal"],
+          "description": "Recurrence frequency"
+        },
+        "dias_semana": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Days of week for weekly recurrence (0=Sun, 1=Mon, ..., 6=Sat)"
         }
       },
       "required": ["id", "user_id", "titulo", "data_hora_execucao", "status_tarefa"]

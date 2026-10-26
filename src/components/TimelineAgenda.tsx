@@ -13,10 +13,12 @@ import {
   Sparkles,
   Filter,
   Search,
+  Repeat,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { useUser } from '../context/UserContext';
 import { Lembrete, StatusTarefa } from '../types';
+import { formatRecurrenceLabel } from '../utils/recurrence';
 
 export const TimelineAgenda: React.FC = () => {
   const {
@@ -325,6 +327,14 @@ export const TimelineAgenda: React.FC = () => {
                       {item.categoria && (
                         <span className="px-2 py-0.2 rounded-md text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700/60">
                           {item.categoria}
+                        </span>
+                      )}
+
+                      {/* Recurrence Badge */}
+                      {item.recorrencia && item.recorrencia !== 'nenhuma' && (
+                        <span className="px-2 py-0.2 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center gap-1">
+                          <Repeat className="w-3 h-3 text-indigo-400" />
+                          <span>{formatRecurrenceLabel(item.recorrencia, item.dias_semana)}</span>
                         </span>
                       )}
 

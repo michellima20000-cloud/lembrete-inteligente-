@@ -665,6 +665,34 @@ export const VoiceAndTextInput: React.FC<VoiceAndTextInputProps> = ({ onOpenManu
         </div>
       </form>
 
+      {/* Quick Suggestion Chips */}
+      {!isRecording && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+          <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-amber-400" />
+            Exemplos:
+          </span>
+          {[
+            'Tomar remédio todo dia às 08h',
+            'Reunião toda segunda às 09h',
+            'Pagar boleto amanhã às 14h',
+            'Alongamento de segunda a sexta às 16h',
+          ].map((sug) => (
+            <button
+              key={sug}
+              type="button"
+              onClick={() => {
+                setInputText(sug);
+                latestTranscriptRef.current = sug;
+              }}
+              className="text-[10px] px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition cursor-pointer"
+            >
+              {sug}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* AI Audio Transcription in progress state */}
       {isTranscribing && (
         <div className="mt-3 p-3.5 rounded-2xl bg-indigo-950/90 border border-indigo-500/50 text-xs text-indigo-200 flex items-center gap-3 animate-in fade-in shadow-lg">
