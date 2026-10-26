@@ -266,52 +266,15 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!currentUser?.id) return { success: false, message: 'Usuário não logado.' };
     
     try {
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
-        const perm = await Notification.requestPermission();
-        setNotificationPermission(perm);
-        if (perm !== 'granted') {
-          return { success: false, message: 'Permissão de notificação negada no navegador.' };
-        }
+      const res = await pushManager.subscribeToPush(currentUser.id);
+      if (res.success) {
+        setIsPushSubscribed(true);
+        setNotificationPermission('granted');
+        // Ensure server has latest reminders list
+        const currentReminders = reminders && reminders.length > 0 ? reminders : loadLocalPartition(currentUser.id);
+        pushManager.syncReminders(currentUser.id, currentReminders);
       }
-
-      if ('serviceWorker' in navigator) {
-        await navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
-      }
-
-      const reg = await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      
-      if (!sub) {
-        const resPublic = await fetch('/api/push/vapid-public-key');
-        const keyData = await resPublic.json();
-        
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(keyData.publicKey) as unknown as BufferSource,
-        });
-      }
-
-      // Registra a assinatura na rota estável do servidor
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          subscription: sub.toJSON()
-        })
-      });
-
-      // Envia os lembretes locais para o servidor monitorar na nuvem
-      const currentReminders = reminders && reminders.length > 0 ? reminders : loadLocalPartition(currentUser.id);
-      await fetch('/api/reminders/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id, lembretes: currentReminders })
-      });
-
-      setIsPushSubscribed(true);
-      setNotificationPermission('granted');
-      return { success: true, message: 'Inscrição realizada!' };
+      return res;
     } catch (err: any) {
       console.error('Falha ao registrar push:', err);
       return { success: false, message: err?.message || 'Falha ao registrar push.' };
