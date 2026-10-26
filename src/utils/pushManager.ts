@@ -565,11 +565,12 @@ class PushManagerService {
       console.warn('[PushManager] Falha ao despachar SCHEDULE_REMINDERS para Service Worker:', e);
     }
 
-    // 2. Non-blocking cloud/server sync (for persistence on Vercel / Cloud backup)
+    // 2. Real-time server sync (ensures server alarms runner has current reminder list immediately)
     try {
       const clientOffset = new Date().getTimezoneOffset();
-      safeFetchJson('/api/reminders/sync', {
+      fetch('/api/reminders/sync', {
         method: 'POST',
+        keepalive: true,
         headers: {
           'Content-Type': 'application/json',
           'x-timezone-offset': String(clientOffset),
