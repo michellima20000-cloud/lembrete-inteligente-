@@ -9,6 +9,9 @@
   "orientation": "portrait-primary",
   "background_color": "#0f172a",
   "theme_color": "#4f46e5",
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "categories": ["utilities", "productivity"],
   "icons": [
     {
       "src": "/icon-192.png",

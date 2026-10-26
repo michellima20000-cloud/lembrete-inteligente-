@@ -67,7 +67,7 @@ export const MobilePWAInstallBanner: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5 leading-snug">
-                Adicione o ícone na sua tela inicial para abrir como app nativo com navegação fluida e alarmes em segundo plano.
+                Fixe o ícone direto na sua tela inicial para tocar alarmes e funcionar 100% offline (instalação direta no aparelho, sem abrir banco).
               </p>
             </div>
           </div>
@@ -79,7 +79,7 @@ export const MobilePWAInstallBanner: React.FC = () => {
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 active:scale-[0.98] text-white text-xs font-black shadow-lg shadow-purple-600/30 transition cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              <span>{isInstallable ? 'Instalar com 1 Toque' : isIOS ? 'Como Instalar no iPhone' : 'Instalar Aplicativo'}</span>
+              <span>{isInstallable ? 'Instalar com 1 Toque' : 'Instalar no Celular'}</span>
             </button>
             <button
               type="button"

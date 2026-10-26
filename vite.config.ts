@@ -27,6 +27,8 @@ export default defineConfig(() => {
           display: 'standalone',
           start_url: '/',
           scope: '/',
+          prefer_related_applications: false,
+          related_applications: [],
           icons: [
             {
               src: '/icon-192.png',
