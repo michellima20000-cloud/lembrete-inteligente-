@@ -1,8 +1,9 @@
-import React from 'react';
-import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell, Download } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, ShieldCheck, LogOut, Flame, Mail, User, CheckCircle2, Volume2, Bell, Download, Cpu } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
+import { PushDiagnosticModal } from './PushDiagnosticModal';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface UserAccountModalProps {
@@ -12,6 +13,7 @@ interface UserAccountModalProps {
 export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) => {
   const { currentUser, firebaseUser, signOutFirebase } = useUser();
   const { testSound, notificationPermission, requestNotificationPermission } = useReminders();
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
 
   if (!currentUser) return null;
 
@@ -109,6 +111,19 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
             </span>
             <PWAInstallButton />
           </div>
+
+          <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-700/50">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Cpu className="w-4 h-4 text-indigo-400" />
+              Diagnóstico Push:
+            </span>
+            <button
+              onClick={() => setShowDiagnosticModal(true)}
+              className="px-2.5 py-1 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-300 font-bold text-[11px] transition cursor-pointer"
+            >
+              Executar Teste
+            </button>
+          </div>
         </div>
 
         {/* Firebase Project Info */}
@@ -144,6 +159,10 @@ export const UserAccountModal: React.FC<UserAccountModalProps> = ({ onClose }) =
           </button>
         </div>
       </div>
+
+      {showDiagnosticModal && (
+        <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
+      )}
     </div>
   );
 };

@@ -978,6 +978,49 @@ app.all(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res:
   return res.json({ status: 'sucesso' });
 });
 
+// 3.1. Server-side Push Diagnostics Endpoint
+app.all(['/api/push/diagnose', '/api/push/diagnose/'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  const userId = req.body?.user_id || (req.query.user_id as string) || (req.headers['x-user-id'] as string);
+  const userSubs = userId ? (userPushSubscriptions.get(userId) || []) : [];
+
+  let totalRegisteredDevices = 0;
+  for (const list of userPushSubscriptions.values()) {
+    totalRegisteredDevices += list.length;
+  }
+
+  return res.json({
+    status: 'sucesso',
+    serverTimeIso: new Date().toISOString(),
+    serverTimestamp: Date.now(),
+    vapid: {
+      configured: !!vapidKeys?.publicKey,
+      publicKeyPreview: vapidKeys.publicKey ? `${vapidKeys.publicKey.substring(0, 16)}...` : null,
+      publicKeyLength: vapidKeys.publicKey?.length || 0,
+    },
+    usersWithPushCount: userPushSubscriptions.size,
+    totalRegisteredDevices,
+    currentUser: userId
+      ? {
+          userId,
+          deviceCount: userSubs.length,
+          hasActiveSubscription: userSubs.length > 0,
+          endpointsPreview: userSubs.map((s) => {
+            try {
+              const u = new URL(s.endpoint);
+              return `${u.protocol}//${u.host}${u.pathname.substring(0, 20)}...`;
+            } catch {
+              return (s.endpoint || '').substring(0, 30);
+            }
+          }),
+        }
+      : null,
+    cachePersisted: fs.existsSync(DATA_CACHE_FILE),
+  });
+});
+
 // 4. Test Background Push Notification (Immediate)
 app.all(['/api/push/test', '/api/push/test/'], async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');

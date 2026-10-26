@@ -12,10 +12,12 @@ import {
   Info,
   Lock,
   BatteryCharging,
+  Cpu,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { useUser } from '../context/UserContext';
 import { soundAlert } from '../utils/audioAlert';
+import { PushDiagnosticModal } from './PushDiagnosticModal';
 
 export const PushNotificationBanner: React.FC = () => {
   const { currentUser } = useUser();
@@ -34,6 +36,7 @@ export const PushNotificationBanner: React.FC = () => {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [showBatteryInfo, setShowBatteryInfo] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
 
   // Auto-subscribe if system permission was already granted in browser
   useEffect(() => {
@@ -48,8 +51,12 @@ export const PushNotificationBanner: React.FC = () => {
     }
   }, [currentUser?.id, isPushSubscribed, subscribePush]);
 
-  // If dismissed by user in this session, don't show
-  if (isDismissed) return null;
+  // If dismissed by user in this session, don't show banner, but show modal if requested
+  if (isDismissed) {
+    return showDiagnosticModal ? (
+      <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
+    ) : null;
+  }
 
   const isGranted = notificationPermission === 'granted' && isPushSubscribed;
   const isDenied = notificationPermission === 'denied';
@@ -208,6 +215,16 @@ export const PushNotificationBanner: React.FC = () => {
               )}
             </button>
 
+            {/* Diagnostic and setup guide button */}
+            <button
+              onClick={() => setShowDiagnosticModal(true)}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-indigo-300 hover:text-indigo-200 text-xs font-bold transition border border-indigo-500/30 shadow-sm cursor-pointer"
+              title="Abrir diagnósticos avançados e guia de configuração do Service Worker"
+            >
+              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Diagnóstico & Guia</span>
+            </button>
+
             <button
               onClick={() => setIsDismissed(true)}
               className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition"
@@ -272,6 +289,9 @@ export const PushNotificationBanner: React.FC = () => {
             <span>{testResult.message}</span>
           </div>
         )}
+        {showDiagnosticModal && (
+          <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
+        )}
       </div>
     );
   }
@@ -292,6 +312,15 @@ export const PushNotificationBanner: React.FC = () => {
               <p className="text-amber-300/80 text-[11px] mt-0.5 leading-relaxed">
                 Para que o alarme toque com a tela do celular apagada ou bloqueada, permita as notificações nas configurações do seu navegador (clique no ícone de cadeado ou configurações do site).
               </p>
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowDiagnosticModal(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-[11px] font-bold border border-amber-500/40 transition cursor-pointer"
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span>Ver Guia & Diagnóstico</span>
+                </button>
+              </div>
             </div>
           </div>
           <button
@@ -302,6 +331,9 @@ export const PushNotificationBanner: React.FC = () => {
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+        {showDiagnosticModal && (
+          <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
+        )}
       </div>
     );
   }
@@ -338,6 +370,14 @@ export const PushNotificationBanner: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-stretch sm:self-center shrink-0">
+          <button
+            onClick={() => setShowDiagnosticModal(true)}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition cursor-pointer"
+            title="Abrir diagnósticos avançados e guia de configuração do Service Worker"
+          >
+            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Diagnóstico</span>
+          </button>
           <button
             onClick={handleActivate}
             disabled={isLoading}
@@ -381,6 +421,10 @@ export const PushNotificationBanner: React.FC = () => {
           )}
           <span>{testResult.message}</span>
         </div>
+      )}
+
+      {showDiagnosticModal && (
+        <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
       )}
     </div>
   );

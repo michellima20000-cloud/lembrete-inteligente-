@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellRing } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, CalendarCheck, Bell, BellRing, Cpu } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { useReminders } from '../context/RemindersContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -8,6 +8,10 @@ import { ModalLoadingFallback } from './skeletons/ModalLoadingFallback';
 
 const UserAccountModal = React.lazy(() =>
   import('./UserAccountModal').then((m) => ({ default: m.UserAccountModal }))
+);
+
+const PushDiagnosticModal = React.lazy(() =>
+  import('./PushDiagnosticModal').then((m) => ({ default: m.PushDiagnosticModal }))
 );
 
 export const Header: React.FC = () => {
@@ -21,6 +25,7 @@ export const Header: React.FC = () => {
   } = useReminders();
 
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
 
   return (
     <>
@@ -94,6 +99,16 @@ export const Header: React.FC = () => {
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
 
+            {/* Push Diagnostic & Setup Guide Button */}
+            <button
+              onClick={() => setShowDiagnosticModal(true)}
+              className="p-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors cursor-pointer"
+              title="Diagnóstico do Service Worker & Guia de Segundo Plano"
+              aria-label="Diagnóstico de Notificações"
+            >
+              <Cpu className="w-4 h-4 text-indigo-400" />
+            </button>
+
             {/* Authenticated User Chip */}
             {currentUser && (
               <div className="flex items-center gap-1">
@@ -138,6 +153,12 @@ export const Header: React.FC = () => {
       {showUserModal && (
         <React.Suspense fallback={<ModalLoadingFallback />}>
           <UserAccountModal onClose={() => setShowUserModal(false)} />
+        </React.Suspense>
+      )}
+
+      {showDiagnosticModal && (
+        <React.Suspense fallback={<ModalLoadingFallback />}>
+          <PushDiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
         </React.Suspense>
       )}
     </>
