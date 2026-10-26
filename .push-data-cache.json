@@ -1,5 +1,22 @@
 {
-  "userPushSubscriptions": {},
+  "userPushSubscriptions": {
+    "test_user_123": [
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/test_endpoint",
+        "keys": {
+          "p256dh": "BG89...",
+          "auth": "xyz..."
+        }
+      },
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/get_fallback",
+        "keys": {
+          "p256dh": "k1",
+          "auth": "a1"
+        }
+      }
+    ]
+  },
   "userLembretes": {
     "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": [],
     "test_verification_user": [],
@@ -26,6 +43,8 @@
     "test_user": 180,
     "usr_68dd8a516780b021": 180,
     "test_verification": 180,
-    "mayalimaalves50@gmail.com": 180
+    "mayalimaalves50@gmail.com": 180,
+    "test": 180,
+    "test_user_123": 180
   }
 }

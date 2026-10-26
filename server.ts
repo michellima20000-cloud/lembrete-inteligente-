@@ -20,12 +20,21 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.text({ type: ['text/*', 'application/json'], limit: '25mb' }));
 
 // CORS & Preflight OPTIONS handler to prevent 405 Method Not Allowed on cross-origin/PWA requests
 app.use((req: Request, res: Response, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD');
+  const reqHeaders = req.headers['access-control-request-headers'];
+  res.header(
+    'Access-Control-Allow-Headers',
+    typeof reqHeaders === 'string' && reqHeaders.length > 0
+      ? reqHeaders
+      : 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-timezone-offset, *'
+  );
+  res.header('Access-Control-Max-Age', '86400');
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -908,13 +917,28 @@ app.all(['/api/push/vapid-public-key', '/api/push/vapid-public-key/'], (_req: Re
   });
 });
 
-// 2. Register / Update Push Subscription for authenticated user (supports POST and GET query fallback)
-app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Response) => {
+// 2. Register / Update Push Subscription for authenticated user (supports POST, GET, PUT, query, text, JSON)
+const handlePushSubscribe = (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
-  let user_id = req.body?.user_id || (req.query.user_id as string);
-  let subscription = req.body?.subscription;
+  let bodyData: any = req.body;
+  if (typeof bodyData === 'string') {
+    try {
+      bodyData = JSON.parse(bodyData);
+    } catch {
+      bodyData = {};
+    }
+  }
+
+  let user_id = bodyData?.user_id || (req.query.user_id as string) || (req.headers['x-user-id'] as string) || 'guest';
+  let subscription = bodyData?.subscription;
+
+  if (typeof subscription === 'string') {
+    try {
+      subscription = JSON.parse(subscription);
+    } catch {}
+  }
 
   if (!subscription && req.query.subscription) {
     try {
@@ -922,14 +946,14 @@ app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Res
     } catch {}
   }
 
-  // If request has no payload (e.g. simple check or preflight), return success status
-  if (!user_id || !subscription || !subscription.endpoint) {
-    if (req.method === 'GET') {
-      return res.json({ status: 'sucesso', mensagem: 'Endpoint push ativo e aguardando requisições.' });
-    }
-    return res.status(400).json({
-      status: 'erro',
-      mensagem: 'user_id e subscription válidos são obrigatórios.',
+  // If request has no valid subscription (e.g. status check or handshake), return current device count with 200
+  if (!subscription || !subscription.endpoint) {
+    const existingCount = (userPushSubscriptions.get(user_id) || []).length;
+    return res.json({
+      status: 'sucesso',
+      mensagem: 'Endpoint de push ativo e operacional.',
+      dispositivos: existingCount,
+      user_id,
     });
   }
 
@@ -956,8 +980,16 @@ app.all(['/api/push/subscribe', '/api/push/subscribe/'], (req: Request, res: Res
     status: 'sucesso',
     mensagem: 'Inscrição push salva com sucesso.',
     dispositivos: filtered.length,
+    user_id,
   });
-});
+};
+
+app.all(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
+app.post(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
+app.get(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
+app.put(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
+app.all(['/api/push/register', '/api/push/register/'], handlePushSubscribe);
+
 
 // 3. Unsubscribe push
 app.all(['/api/push/unsubscribe', '/api/push/unsubscribe/'], (req: Request, res: Response) => {

@@ -1,7 +1,7 @@
 // Service Worker entry point for Lembrete Inteligente PWA
 // Imports background push and alarm handlers and caches essential PWA assets
 
-const CACHE_NAME = 'lembrete-inteligente-pwa-v9';
+const CACHE_NAME = 'lembrete-inteligente-pwa-v10';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -49,7 +49,7 @@ self.addEventListener('activate', (event) => {
 
 // Network-first with cache fallback for offline resilience
 self.addEventListener('fetch', (event) => {
-  // Never intercept non-GET requests (e.g. POST /api/push/subscribe)
+  // STRICT PASSTHROUGH: Never intercept non-GET requests (e.g. POST, PUT, DELETE, OPTIONS)
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);

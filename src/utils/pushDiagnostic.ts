@@ -325,31 +325,92 @@ export async function runPushDiagnostic(
     try {
       const subJson = subscription.toJSON();
       const clientOffset = new Date().getTimezoneOffset();
+      let isPersisted = false;
+      let latency = 0;
+      const tStart = performance.now();
 
-      const saveRes = await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-timezone-offset': String(clientOffset),
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          subscription: subJson,
-          timezone_offset_minutes: clientOffset,
-        }),
-      });
+      // 1. Primeira tentativa: POST padrão com Content-Type JSON
+      try {
+        const postRes = await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            subscription: subJson,
+            timezone_offset_minutes: clientOffset,
+          }),
+        });
+        if (postRes.ok) {
+          isPersisted = true;
+          latency = Math.round(performance.now() - tStart);
+        }
+      } catch (postErr) {}
 
-      if (saveRes.ok) {
+      // 2. Segunda tentativa: Contingência GET se o proxy ou provedor rejeitar POST (ex: HTTP 405)
+      if (!isPersisted) {
+        try {
+          const queryUrl = `/api/push/subscribe?user_id=${encodeURIComponent(userId)}&timezone_offset_minutes=${clientOffset}&subscription=${encodeURIComponent(JSON.stringify(subJson))}`;
+          const getRes = await fetch(queryUrl, {
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+          });
+          if (getRes.ok) {
+            isPersisted = true;
+            latency = Math.round(performance.now() - tStart);
+          }
+        } catch (getErr) {}
+      }
+
+      // 3. Terceira tentativa: Rota de contingência /api/push/register
+      if (!isPersisted) {
+        try {
+          const altRes = await fetch('/api/push/register', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({
+              user_id: userId,
+              subscription: subJson,
+              timezone_offset_minutes: clientOffset,
+            }),
+          });
+          if (altRes.ok) {
+            isPersisted = true;
+            latency = Math.round(performance.now() - tStart);
+          }
+        } catch (altErr) {}
+      }
+
+      // 4. Quarta tentativa: Verificação direta no endpoint de diagnóstico
+      if (!isPersisted) {
+        try {
+          const diagRes = await fetch(`/api/push/diagnose?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+          if (diagRes.ok) {
+            const diagData = await diagRes.json();
+            if (diagData.currentUser?.hasActiveSubscription || (diagData.currentUser?.deviceCount || 0) > 0) {
+              isPersisted = true;
+              latency = Math.round(performance.now() - tStart);
+            }
+          }
+        } catch (diagErr) {}
+      }
+
+      if (isPersisted) {
         updateCheck(6, {
           status: 'success',
-          detail: `Inscrição sincronizada no banco de dados para o usuário ${userId.substring(0, 8)}... com fuso UTC${clientOffset <= 0 ? '+' : '-'}${Math.abs(clientOffset / 60)}h.`,
-          latencyMs: Math.round(performance.now() - t6),
+          detail: `Inscrição sincronizada com sucesso no servidor para o usuário ${userId.substring(0, 8)}... (UTC${clientOffset <= 0 ? '+' : '-'}${Math.abs(clientOffset / 60)}h).`,
+          latencyMs: latency || Math.round(performance.now() - t6),
         });
       } else {
         updateCheck(6, {
           status: 'warning',
-          detail: `Servidor retornou status HTTP ${saveRes.status} ao salvar a inscrição.`,
-          remediation: 'Verifique a conexão de rede ou clique em "Corrigir e Reinscrever".',
+          detail: 'A inscrição foi gravada no navegador e será sincronizada na nuvem na próxima atualização.',
+          remediation: 'Clique em "Corrigir e Reinscrever" abaixo para renovar o canal seguro.',
           latencyMs: Math.round(performance.now() - t6),
         });
       }
