@@ -1,5 +1,24 @@
 @import "tailwindcss";
 
+/* Mobile Touch & Performance Optimizations */
+html, body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+/* GPU hardware acceleration for smooth 90Hz/120Hz animations */
+.gpu-accelerated {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
 @keyframes soundbar {
   0%, 100% {
     height: 6px;
@@ -18,3 +37,4 @@
 .animate-soundbar-5 { animation: soundbar 0.75s ease-in-out infinite 0.05s; }
 .animate-soundbar-6 { animation: soundbar 0.5s ease-in-out infinite 0.25s; }
 .animate-soundbar-7 { animation: soundbar 0.65s ease-in-out infinite 0.12s; }
+

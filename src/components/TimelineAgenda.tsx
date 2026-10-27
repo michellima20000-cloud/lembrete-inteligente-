@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Calendar,
   Clock,
@@ -204,31 +204,43 @@ export const TimelineAgenda: React.FC = () => {
     };
   }, []);
 
-  // Group and count tabs
-  const pendingCount = reminders.filter((r) => r.status_tarefa === 'pendente').length;
-  const postponedCount = reminders.filter((r) => r.status_tarefa === 'adiado').length;
-  const completedCount = reminders.filter((r) => r.status_tarefa === 'concluído').length;
-
-  // Filter items
-  const filteredReminders = reminders.filter((item) => {
-    // Tab filter
-    if (activeTab === 'pendentes' && item.status_tarefa !== 'pendente') return false;
-    if (activeTab === 'adiados' && item.status_tarefa !== 'adiado') return false;
-    if (activeTab === 'concluídos' && item.status_tarefa !== 'concluído') return false;
-
-    // Category filter
-    if (selectedCategory !== 'todas' && item.categoria !== selectedCategory) return false;
-
-    // Search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        item.titulo.toLowerCase().includes(q) ||
-        (item.categoria && item.categoria.toLowerCase().includes(q))
-      );
+  // Optimized Single-Pass Group & Count (Memoized to prevent redundant scans on timer ticks)
+  const { pendingCount, postponedCount, completedCount } = useMemo(() => {
+    let pending = 0;
+    let postponed = 0;
+    let completed = 0;
+    for (let i = 0; i < reminders.length; i++) {
+      const status = reminders[i].status_tarefa;
+      if (status === 'pendente') pending++;
+      else if (status === 'adiado') postponed++;
+      else if (status === 'concluído') completed++;
     }
-    return true;
-  });
+    return { pendingCount: pending, postponedCount: postponed, completedCount: completed };
+  }, [reminders]);
+
+  // Memoized Filtered List: Only recalculates when reminders, tab, category or search query changes
+  const filteredReminders = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return reminders.filter((item) => {
+      // Tab filter
+      if (activeTab === 'pendentes' && item.status_tarefa !== 'pendente') return false;
+      if (activeTab === 'adiados' && item.status_tarefa !== 'adiado') return false;
+      if (activeTab === 'concluídos' && item.status_tarefa !== 'concluído') return false;
+
+      // Category filter
+      if (selectedCategory !== 'todas' && item.categoria !== selectedCategory) return false;
+
+      // Search query
+      if (q) {
+        return (
+          item.titulo.toLowerCase().includes(q) ||
+          (item.categoria && item.categoria.toLowerCase().includes(q))
+        );
+      }
+      return true;
+    });
+  }, [reminders, activeTab, selectedCategory, searchQuery]);
+
 
   // Calculate friendly relative countdown & formatting
   const formatTimeInfo = (isoString: string) => {
