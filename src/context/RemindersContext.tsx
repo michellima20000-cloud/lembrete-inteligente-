@@ -33,6 +33,7 @@ interface RemindersContextType {
   }) => Promise<void>;
   lastAiResponse: AiParseResponse | null;
   requestNotificationPermission: () => Promise<boolean>;
+  checkNotificationPermission: () => Promise<NotificationPermission>;
   notificationPermission: NotificationPermission;
   isPushSubscribed: boolean;
   subscribePush: () => Promise<{ success: boolean; message: string }>;
@@ -167,24 +168,58 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [currentUser?.id, loadLocalPartition, saveLocalPartition]);
 
   // Check notification permission and initialize PushManager
+  const checkNotificationPermission = useCallback(async (): Promise<NotificationPermission> => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setNotificationPermission('denied');
+      return 'denied';
+    }
+    const current = Notification.permission;
+    setNotificationPermission(current);
+
+    if (current === 'granted') {
+      const sub = await pushManager.getExistingSubscription();
+      setIsPushSubscribed(!!sub);
+      if (currentUser?.id && !sub) {
+        pushManager.subscribeToPush(currentUser.id).then((res) => {
+          if (res.success) setIsPushSubscribed(true);
+        }).catch(() => {});
+      }
+    } else {
+      setIsPushSubscribed(false);
+    }
+    return current;
+  }, [currentUser?.id]);
+
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      setNotificationPermission(Notification.permission);
+    pushManager.init();
+    checkNotificationPermission();
+
+    // Listen to window focus & visibility changes (e.g. user toggles permissions in phone/browser settings and comes back)
+    const handleStateChange = () => {
+      checkNotificationPermission();
+    };
+
+    window.addEventListener('focus', handleStateChange);
+    document.addEventListener('visibilitychange', handleStateChange);
+
+    // Modern Permissions API status listener
+    if (typeof window !== 'undefined' && 'navigator' in window && 'permissions' in navigator) {
+      try {
+        navigator.permissions.query({ name: 'notifications' as PermissionName }).then((permStatus) => {
+          permStatus.onchange = () => {
+            checkNotificationPermission();
+          };
+        }).catch(() => {});
+      } catch {}
     }
 
-    pushManager.init();
+    return () => {
+      window.removeEventListener('focus', handleStateChange);
+      document.removeEventListener('visibilitychange', handleStateChange);
+    };
+  }, [checkNotificationPermission]);
 
-    pushManager.getExistingSubscription().then((sub) => {
-      setIsPushSubscribed(!!sub);
-      if (currentUser?.id) {
-        if (sub || (typeof Notification !== 'undefined' && Notification.permission === 'granted')) {
-          pushManager.subscribeToPush(currentUser.id).then((res) => {
-            if (res.success) setIsPushSubscribed(true);
-          }).catch(() => {});
-        }
-      }
-    });
-
+  useEffect(() => {
     // Listen to push alarm signals from service worker
     const unsubscribePushAlarm = pushManager.onAlarmTriggered((reminderId) => {
       soundAlert.startRingingAlarm();
@@ -986,6 +1021,7 @@ export const RemindersProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createManualReminder,
         lastAiResponse,
         requestNotificationPermission,
+        checkNotificationPermission,
         notificationPermission,
         isPushSubscribed,
         subscribePush,

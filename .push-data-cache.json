@@ -8,6 +8,16 @@
           "auth": "a1"
         }
       }
+    ],
+    "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": [
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc-test"
+      }
+    ],
+    "mayalimaalves50@gmail.com": [
+      {
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc-test"
+      }
     ]
   },
   "userLembretes": {
@@ -48,7 +58,8 @@
     ]
   },
   "serverTriggeredReminders": [
-    "exec_rem_test_sync_2026-10-24T14:40:00"
+    "exec_rem_test_sync_2026-10-24T14:40:00",
+    "exec_rem_1793010586500_g3qf_2026-10-26T10:39:46"
   ],
   "userTimezoneOffsets": {
     "test_user": 180,
@@ -56,6 +67,7 @@
     "test_verification": 180,
     "mayalimaalves50@gmail.com": 180,
     "test": 180,
-    "test_user_123": 180
+    "test_user_123": 180,
+    "CiEoITiFP2PqVjFYzu0HZ3TXBmt2": 180
   }
 }

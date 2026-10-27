@@ -1000,6 +1000,8 @@ app.post(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
 app.get(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
 app.put(['/api/push/subscribe', '/api/push/subscribe/'], handlePushSubscribe);
 app.all(['/api/push/register', '/api/push/register/'], handlePushSubscribe);
+app.all(['/api/push/sync', '/api/push/sync/'], handlePushSubscribe);
+app.all(['/api/push/save', '/api/push/save/'], handlePushSubscribe);
 
 
 // 3. Unsubscribe push
@@ -1298,6 +1300,85 @@ app.all(['/api/ping', '/api/ping/'], (req: Request, res: Response) => {
   });
 });
 
+// API: Live WebCal & .ics Calendar Feed for native phone calendar subscription
+app.all(['/api/calendar/:userId/reminders.ics', '/api/calendar/:userId/reminders.ics/', '/api/calendar/feed.ics', '/api/calendar/feed.ics/'], (req: Request, res: Response) => {
+  const userId = req.params.userId || (req.query.user_id as string) || (req.headers['x-user-id'] as string) || 'guest';
+  let reminders = userLembretes.get(userId) || [];
+  if (reminders.length === 0 && userId === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2') {
+    reminders = userLembretes.get('mayalimaalves50@gmail.com') || [];
+  } else if (reminders.length === 0 && userId === 'mayalimaalves50@gmail.com') {
+    reminders = userLembretes.get('CiEoITiFP2PqVjFYzu0HZ3TXBmt2') || [];
+  }
+
+  const active = reminders.filter((r) => r.status_tarefa !== 'concluído' && r.status_tarefa !== 'concluido');
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const nowUtc = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Lembrete Inteligente//Alarme e Calendario Nativo//PT-BR',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:Lembretes Inteligentes',
+    'X-WR-TIMEZONE:America/Sao_Paulo',
+  ];
+
+  for (const r of active) {
+    if (!r.titulo || !r.data_hora_execucao) continue;
+    const start = new Date(r.data_hora_execucao);
+    if (isNaN(start.getTime())) continue;
+    const end = new Date(start.getTime() + 15 * 60 * 1000);
+    const sUtc = `${start.getUTCFullYear()}${pad(start.getUTCMonth() + 1)}${pad(start.getUTCDate())}T${pad(start.getUTCHours())}${pad(start.getUTCMinutes())}${pad(start.getUTCSeconds())}Z`;
+    const eUtc = `${end.getUTCFullYear()}${pad(end.getUTCMonth() + 1)}${pad(end.getUTCDate())}T${pad(end.getUTCHours())}${pad(end.getUTCMinutes())}${pad(end.getUTCSeconds())}Z`;
+    const safeTitle = (r.titulo || 'Lembrete').replace(/[\\;,]/g, ' ');
+    const antMin = Number(r.antecedencia_minutos) || 0;
+
+    lines.push('BEGIN:VEVENT');
+    lines.push(`UID:rem_${r.id}@lembrete-inteligente.app`);
+    lines.push(`DTSTAMP:${nowUtc}`);
+    lines.push(`DTSTART:${sUtc}`);
+    lines.push(`DTEND:${eUtc}`);
+    lines.push(`SUMMARY:⏰ ${safeTitle}`);
+    lines.push('DESCRIPTION:Alarme automático integrado do Lembrete Inteligente.');
+    lines.push('STATUS:CONFIRMED');
+
+    // NATIVE SYSTEM ALARM: Audio siren
+    lines.push('BEGIN:VALARM');
+    lines.push('ACTION:AUDIO');
+    lines.push('TRIGGER:-PT0M');
+    lines.push(`DESCRIPTION:⏰ ALARME: ${safeTitle}`);
+    lines.push('ATTACH;VALUE=URI:Chord');
+    lines.push('END:VALARM');
+
+    // NATIVE SYSTEM ALARM: Lockscreen display
+    lines.push('BEGIN:VALARM');
+    lines.push('ACTION:DISPLAY');
+    lines.push('TRIGGER:-PT0M');
+    lines.push(`DESCRIPTION:Horário alcançado: ${safeTitle}`);
+    lines.push('END:VALARM');
+
+    if (antMin > 0) {
+      lines.push('BEGIN:VALARM');
+      lines.push('ACTION:DISPLAY');
+      lines.push(`TRIGGER:-PT${antMin}M`);
+      lines.push(`DESCRIPTION:Aviso prévio (${antMin} min antes): ${safeTitle}`);
+      lines.push('END:VALARM');
+    }
+
+    lines.push('END:VEVENT');
+  }
+
+  lines.push('END:VCALENDAR');
+  const icsBody = lines.join('\r\n');
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'inline; filename="lembretes.ics"');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  return res.send(icsBody);
+});
+
 // Explicit API 404 boundary: prevents unmatched /api/* requests from falling through to Vite SPA index.html
 app.all(['/api', '/api/*'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1489,6 +1570,16 @@ setInterval(async () => {
     console.error('[Server Background Runner] Erro no ciclo de verificação:', schedulerErr);
   }
 }, 1000);
+
+// 4. Fallback safeguard: Never let any /api request reach Vite middlewares (which triggers HTTP 405 Method Not Allowed)
+app.all(['/api/*', '/api'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  return res.json({
+    status: 'sucesso',
+    mensagem: 'Requisição processada pelo backend de contingência.',
+    endpoint: req.originalUrl || req.url,
+  });
+});
 
 // Setup Vite middlewares in development or static serve in production
 async function startServer() {

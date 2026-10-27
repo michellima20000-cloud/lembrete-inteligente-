@@ -14,11 +14,23 @@ import {
   Filter,
   Search,
   Repeat,
+  Smartphone,
+  Download,
+  ExternalLink,
+  CalendarPlus,
+  Check,
+  Copy,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { useUser } from '../context/UserContext';
 import { Lembrete, StatusTarefa } from '../types';
 import { formatRecurrenceLabel } from '../utils/recurrence';
+import {
+  addReminderToDeviceCalendar,
+  getGoogleCalendarUrl,
+  exportAllRemindersToIcs,
+  getWebcalFeedUrl,
+} from '../utils/calendarSync';
 
 export const TimelineAgenda: React.FC = () => {
   const {
@@ -35,6 +47,50 @@ export const TimelineAgenda: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(() => Date.now());
+  const [copiedWebcal, setCopiedWebcal] = useState(false);
+  const [syncToast, setSyncToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setSyncToast(msg);
+    setTimeout(() => setSyncToast(null), 4000);
+  };
+
+  const handleExportAll = () => {
+    if (!reminders || reminders.length === 0) {
+      showToast('Nenhum lembrete para exportar no momento.');
+      return;
+    }
+    exportAllRemindersToIcs(reminders);
+    showToast('Arquivo de alarme (.ics) gerado! Abra com seu calendário/relógio.');
+  };
+
+  const handleCopyWebcal = async () => {
+    const feed = getWebcalFeedUrl(currentUser?.id || 'guest');
+    const targetUrl = feed.webcal;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(targetUrl);
+        setCopiedWebcal(true);
+        setTimeout(() => setCopiedWebcal(false), 3000);
+        showToast('Link WebCal copiado! Cole no Google Agenda ou Apple Calendar.');
+      } else {
+        window.location.href = targetUrl;
+      }
+    } catch {
+      window.location.href = targetUrl;
+    }
+  };
+
+  const handleSyncItem = async (item: Lembrete) => {
+    const res = await addReminderToDeviceCalendar(item);
+    if (res.method === 'share') {
+      showToast('Enviado para o calendário/relógio do celular!');
+    } else if (res.method === 'google') {
+      showToast('Abrindo no Google Agenda...');
+    } else {
+      showToast('Arquivo .ics de alarme pronto para o celular!');
+    }
+  };
 
   // Continuously update live countdown and instantly recalculate when returning from lockscreen
   useEffect(() => {
@@ -172,6 +228,65 @@ export const TimelineAgenda: React.FC = () => {
             className="w-full bg-slate-900 border border-slate-800 rounded-2xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
           />
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+        </div>
+      </div>
+
+      {/* Toast Notification */}
+      {syncToast && (
+        <div className="p-3 rounded-2xl bg-indigo-600/90 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 flex items-center gap-2 animate-in fade-in">
+          <Smartphone className="w-4 h-4 shrink-0 text-white" />
+          <span className="flex-1">{syncToast}</span>
+        </div>
+      )}
+
+      {/* Mobile Calendar & System Alarm Integration Card */}
+      <div className="p-3.5 sm:p-4 rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 shadow-xl space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-2xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+              <Smartphone className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                <span>Disparo Nativo no Celular (Alarme do Sistema)</span>
+                <span className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  Tela Bloqueada
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                Integra com o relógio e agenda do seu aparelho (Samsung / Google / Apple) para tocar com alarme auditivo.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleExportAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-md shadow-indigo-600/20 active:scale-95"
+              title="Adicionar todos os alarmes diretamente ao calendário do seu celular"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Sincronizar no Celular (.ics)</span>
+            </button>
+
+            <button
+              onClick={handleCopyWebcal}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition active:scale-95"
+              title="Copiar URL WebCal para inscrição automática em tempo real"
+            >
+              {copiedWebcal ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300">Link Copiado!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Assinar WebCal</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -444,6 +559,27 @@ export const TimelineAgenda: React.FC = () => {
                               <Calendar className="w-3.5 h-3.5 text-indigo-400" />
                               Adiar para amanhã
                             </button>
+                            <div className="border-t border-slate-800 my-1" />
+                            <button
+                              onClick={() => {
+                                handleSyncItem(item);
+                                setActiveMenuId(null);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-indigo-950/40 text-indigo-300 flex items-center gap-2 font-medium"
+                            >
+                              <Smartphone className="w-3.5 h-3.5 text-indigo-400" />
+                              Alarme do Celular (.ics)
+                            </button>
+                            <a
+                              href={getGoogleCalendarUrl(item)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setActiveMenuId(null)}
+                              className="w-full text-left px-3 py-2 hover:bg-slate-800 text-slate-300 flex items-center gap-2"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                              Abrir no Google Agenda
+                            </a>
                             <div className="border-t border-slate-800 my-1" />
                             <button
                               onClick={() => {

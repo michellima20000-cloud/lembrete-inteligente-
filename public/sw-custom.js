@@ -510,7 +510,8 @@ async function fireAlarmNotification(alarm, type) {
       requireInteraction: true,
       renotify: true,
       silent: false,
-      vibrate: [800, 250, 800, 250, 800, 250, 1200],
+      sound: '/alarm.wav',
+      vibrate: [1000, 300, 1000, 300, 1000, 300, 1500],
       data: {
         reminderId: alarm.id,
         triggerType: type,
@@ -753,6 +754,7 @@ self.addEventListener('push', (event) => {
     renotify: true,
     requireInteraction: true, // NÃO deixa o alarme sumir sozinho da tela bloqueada
     silent: false,
+    sound: '/alarm.wav',
     vibrate: [1000, 300, 1000, 300, 1000, 300, 1500],
     data: {
       url: data.url || (reminderId ? `/?alarm_reminder_id=${reminderId}` : '/'),
