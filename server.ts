@@ -978,7 +978,18 @@ const handlePushSubscribe = (req: Request, res: Response) => {
   filtered.push(subscription);
   userPushSubscriptions.set(user_id, filtered);
 
-  // Cross-auth continuity: link user alias (e.g., email and Firebase UID)
+  // Universal alias linking: link user ID with their email and known accounts
+  const emailFromBody = req.body?.email || req.query.email;
+  const profile = userProfiles.get(user_id);
+  const account = authAccounts.get(user_id) || (profile?.email ? authAccounts.get(profile.email) : null);
+  const userEmail = emailFromBody || profile?.email || account?.email;
+
+  if (userEmail) {
+    userPushSubscriptions.set(userEmail.toLowerCase(), filtered);
+  }
+  if (account?.id) {
+    userPushSubscriptions.set(account.id, filtered);
+  }
   if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2' || user_id === 'mayalimaalves50@gmail.com') {
     userPushSubscriptions.set('CiEoITiFP2PqVjFYzu0HZ3TXBmt2', filtered);
     userPushSubscriptions.set('mayalimaalves50@gmail.com', filtered);
@@ -986,7 +997,7 @@ const handlePushSubscribe = (req: Request, res: Response) => {
 
   saveCache();
 
-  console.log(`[WebPush] Inscrição salva para usuário ${user_id} (offset ${clientOffset}m). Dispositivos registrados: ${filtered.length}`);
+  console.log(`[WebPush] Inscrição salva para usuário ${user_id} (${userEmail || 'sem email'}, offset ${clientOffset}m). Dispositivos registrados: ${filtered.length}`);
   return res.json({
     status: 'sucesso',
     mensagem: 'Inscrição push salva com sucesso.',
@@ -1265,6 +1276,12 @@ app.all(['/api/reminders/sync', '/api/reminders/sync/'], (req: Request, res: Res
   });
 
   userLembretes.set(user_id, processedReminders);
+  const emailFromBody = bodyData?.email || req.query.email;
+  const profile = userProfiles.get(user_id);
+  const userEmail = emailFromBody || profile?.email;
+  if (userEmail) {
+    userLembretes.set(userEmail.toLowerCase(), processedReminders);
+  }
   if (user_id === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2' || user_id === 'mayalimaalves50@gmail.com') {
     userLembretes.set('CiEoITiFP2PqVjFYzu0HZ3TXBmt2', processedReminders);
     userLembretes.set('mayalimaalves50@gmail.com', processedReminders);
@@ -1480,6 +1497,12 @@ setInterval(async () => {
       if (subscriptions.length === 0) {
         if (userId === 'CiEoITiFP2PqVjFYzu0HZ3TXBmt2') subscriptions = userPushSubscriptions.get('mayalimaalves50@gmail.com') || [];
         else if (userId === 'mayalimaalves50@gmail.com') subscriptions = userPushSubscriptions.get('CiEoITiFP2PqVjFYzu0HZ3TXBmt2') || [];
+        else {
+          const profile = userProfiles.get(userId);
+          if (profile?.email && userPushSubscriptions.has(profile.email.toLowerCase())) {
+            subscriptions = userPushSubscriptions.get(profile.email.toLowerCase()) || [];
+          }
+        }
       }
 
       // Resilient fallback: fallback to any active real device subscription

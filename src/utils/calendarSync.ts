@@ -185,6 +185,49 @@ export function exportAllRemindersToIcs(reminders: Lembrete[], userName = 'Minha
 }
 
 /**
+ * Directly shares or downloads all alarms into the mobile device's native Clock / Calendar app.
+ * Opens Samsung Calendar, Google Calendar, or Apple Calendar with sound alarms enabled.
+ */
+export async function syncAllToDeviceClock(reminders: Lembrete[], userName = 'Minha Agenda'): Promise<{ success: boolean; method: string }> {
+  const activeReminders = reminders.filter((r) => r.status_tarefa !== 'concluído');
+  if (activeReminders.length === 0) return { success: false, method: 'empty' };
+
+  const icsData = buildIcsCalendar(activeReminders, `Lembretes - ${userName}`);
+  const fileName = `alarmes-celular.ics`;
+
+  if (typeof navigator !== 'undefined' && 'share' in navigator && typeof File !== 'undefined') {
+    try {
+      const file = new File([icsData], fileName, { type: 'text/calendar;charset=utf-8' });
+      if ((navigator as any).canShare && (navigator as any).canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `⏰ Alarmes do Celular (${activeReminders.length} lembretes)`,
+          text: `Adicionar todos os alarmes com som diretamente ao seu relógio/agenda nativa.`,
+        });
+        return { success: true, method: 'share' };
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return { success: true, method: 'dismissed' };
+    }
+  }
+
+  // Fallback direct download of .ics bundle
+  const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, 1500);
+  return { success: true, method: 'download' };
+}
+
+
+/**
  * Returns the live WebCal feed URL for subscribing native calendars (Apple Calendar / Google Calendar).
  */
 export function getWebcalFeedUrl(userId: string): { webcal: string; https: string } {

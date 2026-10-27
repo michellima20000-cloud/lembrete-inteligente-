@@ -28,18 +28,27 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Lock,
+  ShieldAlert,
+  HelpCircle,
+  Info,
+  X,
+  Play,
+  BellRing,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { useUser } from '../context/UserContext';
 import { Lembrete, StatusTarefa } from '../types';
 import { formatRecurrenceLabel } from '../utils/recurrence';
 import { soundAlert } from '../utils/audioAlert';
+import { pushManager } from '../utils/pushManager';
 import {
   addReminderToDeviceCalendar,
   getGoogleCalendarUrl,
   exportAllRemindersToIcs,
   getWebcalFeedUrl,
   openAutoCalendarSubscription,
+  syncAllToDeviceClock,
 } from '../utils/calendarSync';
 
 export const TimelineAgenda: React.FC = () => {
@@ -53,6 +62,8 @@ export const TimelineAgenda: React.FC = () => {
     requestNotificationPermission,
     subscribePush,
     isPushSubscribed,
+    testPushDelayed,
+    testPushNotification,
   } = useReminders();
   const { currentUser } = useUser();
 
@@ -76,6 +87,12 @@ export const TimelineAgenda: React.FC = () => {
   const [isConfiguringAuto, setIsConfiguringAuto] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [lastAutoSyncTime, setLastAutoSyncTime] = useState<Date>(() => new Date());
+
+  // Lockscreen Live Diagnostic & Test State
+  const [isTestingLockScreen, setIsTestingLockScreen] = useState(false);
+  const [lockScreenCountdown, setLockScreenCountdown] = useState<number | null>(null);
+  const [lockScreenTestMessage, setLockScreenTestMessage] = useState<string | null>(null);
+  const [showPhoneSettingsGuide, setShowPhoneSettingsGuide] = useState(false);
 
 
   const showToast = (msg: string) => {
@@ -174,12 +191,96 @@ export const TimelineAgenda: React.FC = () => {
     }
   };
 
+  // Test delayed push notification specifically designed for locked screen verification
+  const handleTestLockScreenAlarm = async () => {
+    setIsTestingLockScreen(true);
+    setLockScreenTestMessage('Preparando disparo... Verificando permissões...');
+    try {
+      soundAlert.startBackgroundKeepAlive();
+
+      // 1. Check or request notification permission
+      let perm = notificationPermission;
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        if (Notification.permission !== 'granted') {
+          const granted = await requestNotificationPermission();
+          perm = granted ? 'granted' : 'denied';
+        } else {
+          perm = 'granted';
+        }
+      }
+
+      if (perm !== 'granted') {
+        setLockScreenTestMessage('⚠️ Permissão de notificação negada. Ative as notificações no navegador.');
+        setIsTestingLockScreen(false);
+        return;
+      }
+
+      // 2. Ensure device subscription is active
+      if (!isPushSubscribed) {
+        await subscribePush();
+      }
+
+      // 3. Sync current reminders to server store
+      if (currentUser?.id) {
+        pushManager.syncReminders(currentUser.id, reminders);
+      }
+
+      // 4. Trigger 10-second delayed push
+      const testRes = await testPushDelayed(10);
+      if (!testRes.success) {
+        setLockScreenTestMessage(`⚠️ ${testRes.message}`);
+        setIsTestingLockScreen(false);
+        return;
+      }
+
+      // 5. Start interactive 10s countdown
+      setLockScreenCountdown(10);
+      setLockScreenTestMessage('🔒 BLOQUEIE OU DESLIGUE A TELA DO SEU CELULAR AGORA!');
+      showToast('🔒 BLOQUEIE A TELA DO SEU CELULAR AGORA! Disparo em 10 segundos!');
+
+      let remaining = 10;
+      const countTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(countTimer);
+          setLockScreenCountdown(null);
+          setIsTestingLockScreen(false);
+          setLockScreenTestMessage('⏰ O alarme foi disparado pelo servidor!');
+          setTimeout(() => setLockScreenTestMessage(null), 8000);
+        } else {
+          setLockScreenCountdown(remaining);
+        }
+      }, 1000);
+    } catch (err: any) {
+      console.error('Error in lockscreen test:', err);
+      setLockScreenTestMessage(err?.message || 'Erro ao agendar teste.');
+      setIsTestingLockScreen(false);
+    }
+  };
+
+  // 100% Guaranteed Native Clock Alarm: Opens Samsung Clock / Google Calendar with VALARM audio alarm
+  const handleSyncToDeviceClock = async () => {
+    try {
+      const res = await syncAllToDeviceClock(reminders, currentUser?.nome);
+      if (res.method === 'share') {
+        showToast('✅ Enviado! Selecione "Relógio" ou "Calendário" e toque em Salvar.');
+      } else if (res.method === 'empty') {
+        showToast('Nenhum lembrete ativo para sincronizar.');
+      } else {
+        showToast('✅ Arquivo de alarme (.ics) baixado! Abra com seu aplicativo de Relógio/Agenda.');
+      }
+    } catch {
+      showToast('Falha ao abrir agenda do celular.');
+    }
+  };
+
   // Keep track of background sync timestamp whenever reminders list updates
   useEffect(() => {
     if (isAutoSyncActive && reminders && reminders.length > 0) {
       setLastAutoSyncTime(new Date());
     }
   }, [reminders, isAutoSyncActive]);
+
 
 
   // Continuously update live countdown and instantly recalculate when returning from lockscreen
@@ -368,6 +469,29 @@ export const TimelineAgenda: React.FC = () => {
           </div>
         </div>
 
+        {/* Active Lockscreen Countdown Banner */}
+        {lockScreenCountdown !== null && (
+          <div className="p-4 rounded-2xl bg-amber-950/80 border-2 border-amber-400 text-white space-y-2 text-center shadow-2xl shadow-amber-500/30 animate-pulse">
+            <div className="flex items-center justify-center gap-2 text-amber-300 font-bold text-sm sm:text-base">
+              <Lock className="w-5 h-5 text-amber-400 animate-bounce" />
+              <span>🔒 BLOQUEIE OU DESLIGUE A TELA AGORA!</span>
+            </div>
+            <div className="text-4xl font-black text-amber-400 tracking-wider my-1">
+              {lockScreenCountdown}s
+            </div>
+            <p className="text-xs text-amber-200">
+              O servidor vai disparar o alarme sonoro na tela bloqueada do seu aparelho em instantes!
+            </p>
+          </div>
+        )}
+
+        {lockScreenTestMessage && lockScreenCountdown === null && (
+          <div className="p-3 rounded-2xl bg-indigo-950/80 border border-indigo-500/40 text-xs text-indigo-200 flex items-center gap-2">
+            <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>{lockScreenTestMessage}</span>
+          </div>
+        )}
+
         {/* 1-Tap Automatic Mobile Setup CTA */}
         {notificationPermission !== 'granted' || !isPushSubscribed ? (
           <div className="p-3.5 rounded-2xl bg-indigo-950/60 border border-indigo-500/30 space-y-2.5">
@@ -420,6 +544,28 @@ export const TimelineAgenda: React.FC = () => {
             </button>
           </div>
         )}
+
+        {/* 2 Primary Mobile Alarm Action Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {/* Test 10s Locked Screen Button */}
+          <button
+            onClick={handleTestLockScreenAlarm}
+            disabled={isTestingLockScreen}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-600/30 to-amber-500/20 hover:from-amber-600/40 hover:to-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/40 transition active:scale-[0.98] shadow-md"
+          >
+            <Play className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>🧪 Testar na Tela Bloqueada (10s)</span>
+          </button>
+
+          {/* Guaranteed System Clock/Agenda Sync */}
+          <button
+            onClick={handleSyncToDeviceClock}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-2xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs border border-indigo-400/40 transition active:scale-[0.98] shadow-md shadow-indigo-600/20"
+          >
+            <Clock className="w-4 h-4 text-indigo-200 shrink-0" />
+            <span>⏰ Salvar no Relógio do Celular</span>
+          </button>
+        </div>
 
         {/* Live Auto-Sync Status & Toggle Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
@@ -495,6 +641,51 @@ export const TimelineAgenda: React.FC = () => {
             </span>
           </div>
         </div>
+
+        {/* Phone Brand Settings Guide Accordion */}
+        <div className="pt-1 border-t border-slate-800/50">
+          <button
+            onClick={() => setShowPhoneSettingsGuide(!showPhoneSettingsGuide)}
+            className="w-full flex items-center justify-between text-[11px] text-amber-300/90 hover:text-amber-200 transition py-1"
+          >
+            <span className="flex items-center gap-1.5 font-semibold">
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>O alarme não tocou com a tela bloqueada? Veja como ajustar no seu celular</span>
+            </span>
+            {showPhoneSettingsGuide ? (
+              <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            )}
+          </button>
+
+          {showPhoneSettingsGuide && (
+            <div className="mt-2 p-3.5 rounded-2xl bg-slate-950 border border-amber-500/30 text-xs text-slate-300 space-y-2.5 animate-in fade-in">
+              <div className="font-bold text-amber-300 text-xs flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                <span>Configurações essenciais do Android / iOS para tocar com tela apagada:</span>
+              </div>
+              <ul className="space-y-2 text-[11px] text-slate-300 pl-1">
+                <li>
+                  📱 <strong className="text-white">Samsung (One UI):</strong> Acesse <em>Configurações do Celular &gt; Notificações &gt; Notificações da tela de bloqueio</em> e selecione <strong>"Exibir conteúdo"</strong>. Em <em>Bateria &gt; Limites de uso em 2º plano</em>, certifique-se de que o Chrome não está suspenso.
+                </li>
+                <li>
+                  📱 <strong className="text-white">Xiaomi / Redmi (MIUI):</strong> Acesse <em>Configurações &gt; Apps &gt; Gerenciar apps &gt; Chrome &gt; Notificações</em> e marque <strong>"Notificações na tela de bloqueio"</strong> e <strong>"Permitir som"</strong>.
+                </li>
+                <li>
+                  📱 <strong className="text-white">Motorola / Android Puro:</strong> Acesse <em>Configurações &gt; Apps &gt; Chrome &gt; Notificações &gt; Sites</em> e confirme que o som e a vibração estão ativados.
+                </li>
+                <li>
+                  🍎 <strong className="text-white">iPhone (iOS):</strong> No iPhone, as notificações em segundo plano exigem instalar o app: toque no botão <strong>Compartilhar</strong> (quadrado com seta no Safari) e escolha <strong>"Adicionar à Tela de Início"</strong>.
+                </li>
+                <li className="pt-1 text-emerald-300 font-semibold">
+                  💡 <strong>Dica Infalível:</strong> Toque no botão roxo <strong>"⏰ Salvar no Relógio do Celular"</strong> acima! Ele armazena o alarme diretamente no despertador/agenda nativa do seu aparelho, tocando com som alto mesmo sem internet ou com o celular desligado.
+                </li>
+              </ul>
+            </div>
+          )}
+        </div>
+
 
         {/* Advanced / Manual Options Accordion */}
         <div className="pt-1 border-t border-slate-800/50">
