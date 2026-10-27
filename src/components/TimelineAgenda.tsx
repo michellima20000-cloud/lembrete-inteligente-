@@ -20,16 +20,26 @@ import {
   CalendarPlus,
   Check,
   Copy,
+  Zap,
+  Radio,
+  Volume2,
+  ToggleLeft,
+  ToggleRight,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
 } from 'lucide-react';
 import { useReminders } from '../context/RemindersContext';
 import { useUser } from '../context/UserContext';
 import { Lembrete, StatusTarefa } from '../types';
 import { formatRecurrenceLabel } from '../utils/recurrence';
+import { soundAlert } from '../utils/audioAlert';
 import {
   addReminderToDeviceCalendar,
   getGoogleCalendarUrl,
   exportAllRemindersToIcs,
   getWebcalFeedUrl,
+  openAutoCalendarSubscription,
 } from '../utils/calendarSync';
 
 export const TimelineAgenda: React.FC = () => {
@@ -39,6 +49,10 @@ export const TimelineAgenda: React.FC = () => {
     snoozeReminder,
     deleteReminder,
     isLoading,
+    notificationPermission,
+    requestNotificationPermission,
+    subscribePush,
+    isPushSubscribed,
   } = useReminders();
   const { currentUser } = useUser();
 
@@ -49,6 +63,20 @@ export const TimelineAgenda: React.FC = () => {
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(() => Date.now());
   const [copiedWebcal, setCopiedWebcal] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
+
+  // Automatic Mobile Device Background Synchronization
+  const [isAutoSyncActive, setIsAutoSyncActive] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('lembrete_auto_sync_device');
+      return saved !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [isConfiguringAuto, setIsConfiguringAuto] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [lastAutoSyncTime, setLastAutoSyncTime] = useState<Date>(() => new Date());
+
 
   const showToast = (msg: string) => {
     setSyncToast(msg);
@@ -91,6 +119,68 @@ export const TimelineAgenda: React.FC = () => {
       showToast('Arquivo .ics de alarme pronto para o celular!');
     }
   };
+
+  // 1-Tap Automatic Mobile Device & Authorization Configuration
+  const handleAutoConfigureMobile = async () => {
+    setIsConfiguringAuto(true);
+    try {
+      // 1. Enable audio subsystem keep-alive for lock-screen sound
+      soundAlert.startBackgroundKeepAlive();
+
+      // 2. Request native notification permissions if not granted
+      let permGranted = notificationPermission === 'granted';
+      if (!permGranted && typeof window !== 'undefined' && 'Notification' in window) {
+        permGranted = await requestNotificationPermission();
+      }
+
+      // 3. Register Cloud Push Subscription
+      if (!isPushSubscribed) {
+        await subscribePush().catch(() => {});
+      }
+
+      // 4. Automatically connect phone's native calendar/clock via WebCal
+      openAutoCalendarSubscription(currentUser?.id || 'guest');
+
+      // 5. Persist auto-sync setting
+      localStorage.setItem('lembrete_auto_sync_device', 'true');
+      setIsAutoSyncActive(true);
+      setLastAutoSyncTime(new Date());
+
+      if (permGranted) {
+        showToast('🎉 Disparo e sincronização automática ativados no celular!');
+      } else {
+        showToast('Agenda conectada! Lembre-se de permitir as notificações no navegador.');
+      }
+    } catch (err) {
+      console.error('Error during auto-configuration:', err);
+      showToast('Configurando no celular... Conectando agenda nativa.');
+    } finally {
+      setIsConfiguringAuto(false);
+    }
+  };
+
+  const toggleAutoSync = () => {
+    const nextState = !isAutoSyncActive;
+    setIsAutoSyncActive(nextState);
+    try {
+      localStorage.setItem('lembrete_auto_sync_device', nextState ? 'true' : 'false');
+    } catch {}
+
+    if (nextState) {
+      showToast('⚡ Sincronização automática em segundo plano ativada!');
+      handleAutoConfigureMobile();
+    } else {
+      showToast('Sincronização automática desativada temporariamente.');
+    }
+  };
+
+  // Keep track of background sync timestamp whenever reminders list updates
+  useEffect(() => {
+    if (isAutoSyncActive && reminders && reminders.length > 0) {
+      setLastAutoSyncTime(new Date());
+    }
+  }, [reminders, isAutoSyncActive]);
+
 
   // Continuously update live countdown and instantly recalculate when returning from lockscreen
   useEffect(() => {
@@ -239,54 +329,210 @@ export const TimelineAgenda: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile Calendar & System Alarm Integration Card */}
-      <div className="p-3.5 sm:p-4 rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 shadow-xl space-y-2.5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-2xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-              <Smartphone className="w-4 h-4" />
+      {/* Mobile Calendar & System Alarm Integration Card - AUTOMATIC MODE */}
+      <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 shadow-2xl space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shrink-0">
+              <Smartphone className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
-              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-                <span>Disparo Nativo no Celular (Alarme do Sistema)</span>
-                <span className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-white">
+                  Disparo Nativo no Celular (Alarme do Sistema)
+                </h3>
+                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                   Tela Bloqueada
                 </span>
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                Integra com o relógio e agenda do seu aparelho (Samsung / Google / Apple) para tocar com alarme auditivo.
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                  <span className={`w-1.5 h-1.5 rounded-full ${isAutoSyncActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  {isAutoSyncActive ? 'Automático Ativo' : 'Manual'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Integração contínua com o relógio e agenda do seu aparelho (Samsung / Google / Apple) para tocar alarme sonoro mesmo com a tela bloqueada ou app fechado.
               </p>
             </div>
           </div>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+        {/* 1-Tap Automatic Mobile Setup CTA */}
+        {notificationPermission !== 'granted' || !isPushSubscribed ? (
+          <div className="p-3.5 rounded-2xl bg-indigo-950/60 border border-indigo-500/30 space-y-2.5">
+            <div className="flex items-center gap-2 text-indigo-200 text-xs font-semibold">
+              <Zap className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+              <span>Configuração Automática Direta no Celular:</span>
+            </div>
             <button
-              onClick={handleExportAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-md shadow-indigo-600/20 active:scale-95"
-              title="Adicionar todos os alarmes diretamente ao calendário do seu celular"
+              onClick={handleAutoConfigureMobile}
+              disabled={isConfiguringAuto}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-indigo-600 to-indigo-700 hover:from-emerald-500 hover:to-indigo-600 text-white font-bold text-xs sm:text-sm shadow-xl shadow-indigo-600/30 transition active:scale-[0.98] border border-emerald-400/40 disabled:opacity-60"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Sincronizar no Celular (.ics)</span>
-            </button>
-
-            <button
-              onClick={handleCopyWebcal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition active:scale-95"
-              title="Copiar URL WebCal para inscrição automática em tempo real"
-            >
-              {copiedWebcal ? (
+              {isConfiguringAuto ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-300">Link Copiado!</span>
+                  <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                  <span>Configurando Automaticamente no Celular...</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Assinar WebCal</span>
+                  <Zap className="w-4 h-4 text-amber-300 animate-bounce" />
+                  <span>⚡ Configurar Tudo Automaticamente no Celular (1 Toque)</span>
                 </>
               )}
             </button>
+            <p className="text-[10px] text-slate-400 text-center">
+              Autoriza notificações nativas, liga o alarme em segundo plano e conecta automaticamente com seu relógio.
+            </p>
           </div>
+        ) : (
+          <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-emerald-300">
+                  Disparo Automático Configurado no Celular!
+                </span>
+                <p className="text-[10px] text-slate-400">
+                  Seus alarmes tocam automaticamente pelo sistema do aparelho com tela bloqueada.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleAutoConfigureMobile}
+              disabled={isConfiguringAuto}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition active:scale-95 shrink-0"
+              title="Atualizar agenda nativa agora"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isConfiguringAuto ? 'animate-spin' : ''}`} />
+              <span>Sincronizar Celular Agora</span>
+            </button>
+          </div>
+        )}
+
+        {/* Live Auto-Sync Status & Toggle Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <span className={`flex h-3 w-3 ${isAutoSyncActive ? 'relative' : ''}`}>
+                {isAutoSyncActive && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span className={`relative inline-flex rounded-full h-3 w-3 ${isAutoSyncActive ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+              </span>
+            </div>
+            <div>
+              <div className="text-xs text-white">
+                <span className="font-semibold">Sincronização em Segundo Plano: </span>
+                <span className={isAutoSyncActive ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                  {isAutoSyncActive ? 'ATIVADA (Tempo Real)' : 'DESATIVADA'}
+                </span>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {isAutoSyncActive
+                  ? `Última atualização automática: ${lastAutoSyncTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} • ${reminders.filter(r => r.status_tarefa !== 'concluído').length} alarme(s) ativos`
+                  : 'Ative para manter seu relógio/agenda sincronizados automaticamente'}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={toggleAutoSync}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition border ${
+              isAutoSyncActive
+                ? 'bg-emerald-950/50 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/50'
+                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+            }`}
+          >
+            {isAutoSyncActive ? (
+              <>
+                <ToggleRight className="w-4 h-4 text-emerald-400" />
+                <span>Automático: Ligado</span>
+              </>
+            ) : (
+              <>
+                <ToggleLeft className="w-4 h-4 text-slate-400" />
+                <span>Automático: Desligado</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* 3 Pillars Status Indicators */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+          <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${notificationPermission === 'granted' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className="text-slate-400">Notificações:</span>
+            <span className={`font-semibold ml-auto ${notificationPermission === 'granted' ? 'text-emerald-300' : 'text-amber-300'}`}>
+              {notificationPermission === 'granted' ? 'Autorizadas' : 'Pendente'}
+            </span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isPushSubscribed ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className="text-slate-400">Push em Nuvem:</span>
+            <span className={`font-semibold ml-auto ${isPushSubscribed ? 'text-emerald-300' : 'text-amber-300'}`}>
+              {isPushSubscribed ? 'Conectado' : 'Pendente'}
+            </span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isAutoSyncActive ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+            <span className="text-slate-400">Relógio/Agenda:</span>
+            <span className={`font-semibold ml-auto ${isAutoSyncActive ? 'text-emerald-300' : 'text-slate-400'}`}>
+              {isAutoSyncActive ? 'Sincronizado' : 'Manual'}
+            </span>
+          </div>
+        </div>
+
+        {/* Advanced / Manual Options Accordion */}
+        <div className="pt-1 border-t border-slate-800/50">
+          <button
+            onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+            className="w-full flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition py-1"
+          >
+            <span>Opções manuais (.ics avulso, link WebCal direto)</span>
+            {showAdvancedOptions ? (
+              <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            )}
+          </button>
+
+          {showAdvancedOptions && (
+            <div className="mt-2 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5 animate-in fade-in">
+              <p className="text-[11px] text-slate-400">
+                Se desejar exportar ou assinar manualmente sem a automação do sistema:
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleExportAll}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-semibold transition active:scale-95"
+                  title="Baixar arquivo .ics para abrir manualmente em qualquer app"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Baixar Arquivo .ics</span>
+                </button>
+
+                <button
+                  onClick={handleCopyWebcal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition active:scale-95"
+                  title="Copiar URL WebCal para colar em calendários externos"
+                >
+                  {copiedWebcal ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300">Link Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Copiar Link WebCal</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

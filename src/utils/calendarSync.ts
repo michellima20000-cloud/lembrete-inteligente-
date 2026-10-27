@@ -193,3 +193,37 @@ export function getWebcalFeedUrl(userId: string): { webcal: string; https: strin
   const webcal = `webcal://${host}/api/calendar/${encodeURIComponent(userId)}/reminders.ics`;
   return { webcal, https };
 }
+
+/**
+ * Automatically launches the device's native calendar subscription flow.
+ * On Android, opens the system calendar or Google Calendar subscription.
+ * On iOS, opens the native Apple Calendar subscribe dialog with automatic periodic updates.
+ */
+export function openAutoCalendarSubscription(userId: string): { success: boolean; method: string } {
+  const { webcal, https } = getWebcalFeedUrl(userId);
+  if (typeof window === 'undefined') return { success: false, method: 'none' };
+
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  try {
+    if (isIOS) {
+      window.location.href = webcal;
+      return { success: true, method: 'ios_webcal' };
+    }
+
+    if (isAndroid) {
+      window.location.href = webcal;
+      return { success: true, method: 'android_webcal' };
+    }
+
+    window.location.href = webcal;
+    return { success: true, method: 'desktop_webcal' };
+  } catch (err) {
+    console.error('Failed to launch webcal protocol:', err);
+    const gcalUrl = `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(https)}`;
+    window.open(gcalUrl, '_blank');
+    return { success: true, method: 'gcal_fallback' };
+  }
+}
+
